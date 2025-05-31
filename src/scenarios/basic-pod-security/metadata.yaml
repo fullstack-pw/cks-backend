@@ -1,0 +1,14 @@
+id: basic-pod-security
+title: "Basic Pod Security Configuration"
+description: "Learn how to configure and enforce basic Pod security in a Kubernetes cluster."
+version: "1.0.0"
+difficulty: beginner
+timeEstimate: "30m"
+topics:
+  - pod-security
+  - security-context
+requirements:
+  k8sVersion: "1.33.0"
+  resources:
+    cpu: 2
+    memory: 2Gi

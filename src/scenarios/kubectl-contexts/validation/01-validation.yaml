@@ -1,0 +1,54 @@
+validation:
+  - id: directory-exists
+    type: file_exists
+    file:
+      path: "/home/suporte/1"
+      target: control-plane
+    errorMessage: "Directory /home/suporte/1 does not exist"
+
+  - id: contexts-file-exists
+    type: file_exists
+    file:
+      path: "/home/suporte/1/contexts"
+      target: control-plane
+    errorMessage: "File /home/suporte/1/contexts does not exist"
+
+  - id: contexts-file-content
+    type: file_content
+    file:
+      path: "/home/suporte/1/contexts"
+      target: control-plane
+    condition: contains
+    value: "infra-prod"
+    errorMessage: "File /home/suporte/1/contexts does not contain expected context names"
+
+  - id: cert-file-exists
+    type: file_exists
+    file:
+      path: "/home/suporte/1/cert"
+      target: control-plane
+    errorMessage: "File /home/suporte/1/cert does not exist"
+
+  - id: cert-file-content
+    type: file_content
+    file:
+      path: "/home/suporte/1/cert"
+      target: control-plane
+    condition: contains
+    value: "BEGIN CERTIFICATE"
+    errorMessage: "File /home/suporte/1/cert does not contain a valid certificate"
+
+  - id: cert-decoded-properly
+    type: script
+    script:
+      script: |
+        #!/bin/bash
+        # Check if certificate is properly decoded (not base64 encoded)
+        if grep -q "BEGIN CERTIFICATE" /home/suporte/1/cert && ! grep -q "^[A-Za-z0-9+/=]*$" /home/suporte/1/cert; then
+          exit 0
+        else
+          exit 1
+        fi
+      target: control-plane
+      successCode: 0
+    errorMessage: "Certificate in /home/suporte/1/cert is not properly decoded"

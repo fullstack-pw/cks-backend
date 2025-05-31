@@ -1,0 +1,16 @@
+id: kubectl-contexts
+title: "Kubectl Contexts and Certificate Management"
+description: "Learn how to manage kubectl contexts and extract certificates from kubeconfig files."
+version: "1.0.0"
+difficulty: beginner
+timeEstimate: "15m"
+topics:
+  - kubectl
+  - contexts
+  - certificates
+  - kubeconfig
+requirements:
+  k8sVersion: "1.33.0"
+  resources:
+    cpu: 2
+    memory: 2Gi

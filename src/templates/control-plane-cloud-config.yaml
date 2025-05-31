@@ -1,0 +1,71 @@
+#cloud-config
+hostname: ${CONTROL_PLANE_VM_NAME}
+manage_etc_hosts: true
+
+write_files:
+  # Updated kubeadm init configuration
+  - path: /tmp/kubeadm-init.yaml
+    owner: root:root
+    permissions: "0644"
+    content: |
+      apiVersion: kubeadm.k8s.io/v1beta4
+      kind: InitConfiguration
+      nodeRegistration:
+        criSocket: unix:///run/containerd/containerd.sock
+      ---
+      apiVersion: kubeadm.k8s.io/v1beta4
+      kind: ClusterConfiguration
+      kubernetesVersion: v${K8S_VERSION}
+      networking:
+        podSubnet: ${POD_CIDR}
+      ---
+      apiVersion: kubelet.config.k8s.io/v1beta1
+      kind: KubeletConfiguration
+      cgroupDriver: systemd
+
+runcmd:
+  # Make sure kubelet is running
+  - systemctl enable kubelet
+  - systemctl start kubelet
+
+  # Initialize the Kubernetes control plane
+  - kubeadm init --config=/tmp/kubeadm-init.yaml --ignore-preflight-errors=NumCPU,Mem
+
+  # Set up kubeconfig for root user
+  - mkdir -p /root/.kube
+  - cp -i /etc/kubernetes/admin.conf /root/.kube/config
+  - chown root:root /root/.kube/config
+
+  # Install Cilium CNI
+  - mkdir -p /opt/cilium
+  - curl -L --remote-name-all https://github.com/cilium/cilium-cli/releases/latest/download/cilium-linux-amd64.tar.gz
+  - tar xzvfC cilium-linux-amd64.tar.gz /usr/local/bin
+  - rm cilium-linux-amd64.tar.gz
+  - export HOME=/root
+  - export XDG_CACHE_HOME=/root/.cache
+  - mkdir -p $XDG_CACHE_HOME
+  - cilium install --version 1.17.3
+
+  # Allow workloads on the control plane
+  - kubectl --kubeconfig=/etc/kubernetes/admin.conf taint nodes --all node-role.kubernetes.io/control-plane-
+
+  # Create a join command for worker nodes
+  - kubeadm token create --print-join-command > /etc/kubeadm-join-command
+  - chmod 644 /etc/kubeadm-join-command
+
+  # Set up kubeconfig for suporte user
+  - mkdir -p /home/suporte/.kube
+  - cp -i /etc/kubernetes/admin.conf /home/suporte/.kube/config
+  - chown -R suporte:suporte /home/suporte
+
+  # Set up kubectl completion for suporte user
+  - |
+    # Generate kubectl completion and set it up for suporte user
+    kubectl completion bash > /home/suporte/.kube/completion.bash.inc
+    echo 'source /home/suporte/.kube/completion.bash.inc' >> /home/suporte/.bashrc
+    chown suporte:suporte /home/suporte/.kube/completion.bash.inc
+    chown suporte:suporte /home/suporte/.bashrc
+
+  # Change default shell for suporte user
+  - usermod -s /bin/bash suporte
+  - echo 'alias k=kubectl' >> /home/suporte/.bashrc

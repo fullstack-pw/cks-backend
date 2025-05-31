@@ -1,0 +1,34 @@
+#cloud-config
+hostname: ${WORKER_VM_NAME}
+manage_etc_hosts: false
+
+runcmd:
+  # Make sure kubelet is running
+  - systemctl enable kubelet
+  - systemctl start kubelet
+
+  # Make sure control plane hostname is resolvable
+  - echo "${CONTROL_PLANE_IP} ${CONTROL_PLANE_VM_NAME}" >> /etc/hosts
+  - cat /etc/hosts
+
+  # Wait for control plane to become available
+  - until nc -z ${CONTROL_PLANE_ENDPOINT} 6443; do echo "Waiting for control plane ${CONTROL_PLANE_ENDPOINT}..."; sleep 10; done
+
+  # Join the Kubernetes cluster
+  - eval "$JOIN_COMMAND --ignore-preflight-errors=NumCPU,Mem"
+  - echo "Kubernetes eval join command executed"
+  - bash -c "${JOIN_COMMAND} --ignore-preflight-errors=NumCPU,Mem"
+  - echo "Kubernetes bash -c join command executed"
+  - chown -R suporte:suporte /home/suporte
+
+  # Set up kubectl completion for suporte user
+  - |
+    # Generate kubectl completion and set it up for suporte user
+    kubectl completion bash > /home/suporte/.kube/completion.bash.inc
+    echo 'source /home/suporte/.kube/completion.bash.inc' >> /home/suporte/.bashrc
+    chown suporte:suporte /home/suporte/.kube/completion.bash.inc
+    chown suporte:suporte /home/suporte/.bashrc
+
+  # Change default shell for suporte user
+  - usermod -s /bin/bash suporte
+  - echo 'alias k=kubectl' >> /home/suporte/.bashrc

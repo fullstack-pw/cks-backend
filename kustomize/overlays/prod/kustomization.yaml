@@ -1,0 +1,42 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+patches:
+  - patch: |-
+      - op: replace
+        path: /metadata/annotations/external-dns.alpha.kubernetes.io~1hostname
+        value: "api.cks.fullstack.pw"
+      - op: replace
+        path: /spec/tls/0/hosts/0
+        value: "api.cks.fullstack.pw"
+      - op: replace
+        path: /spec/rules/0/host
+        value: "api.cks.fullstack.pw"
+    target:
+      kind: Ingress
+      name: cks-backend
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 2
+    target:
+      kind: Deployment
+      name: cks-backend
+  - patch: |-
+      - op: replace
+        path: /data/ENVIRONMENT
+        value: "prod"
+      - op: replace
+        path: /data/LOG_LEVEL
+        value: "DEBUG"
+    target:
+      kind: ConfigMap
+      name: cks-backend
+configMapGenerator:
+  - name: cks-backend-config
+    behavior: merge
+    envs: 
+      - configmap

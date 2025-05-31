@@ -1,0 +1,84 @@
+steps:
+  - id: create-course-directory
+    type: command
+    target: control-plane
+    description: "Create /home/suporte/1 directory"
+    command: "mkdir -p /home/suporte/1"
+    timeout: 30s
+    retryCount: 2
+
+  - id: setup-kubeconfig
+    type: script
+    target: control-plane
+    description: "Setup kubeconfig with multiple contexts including restricted@infra-prod user"
+    script: |
+      #!/bin/bash
+
+      # Create a sample kubeconfig with multiple contexts
+      cat > /tmp/sample-kubeconfig.yaml << 'ENDFILE'
+      apiVersion: v1
+      clusters:
+      - cluster:
+          certificate-authority-data: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSURCakNDQWU2Z0F3SUJBZ0lCQVRBTkJna3Foa2lHOXcwQkFRc0ZBREFWTVJNd0VRWURWUVFERXdwcmRXSmwKY201bGRHVnpNQjRYRFRJd01Ea3lOakl3TlRVd05Gb1hEVE14TURreU5qSXdOVFV3TkZvd0ZURVRNQkVHQTFVRQpBeE1LYTNWaVpYSnVaWFJsY3pDQ0FTSXdEUVlKS29aSWh2Y05BUUVCQlFBRGdnRVBBRENDQVFvQ2dnRUJBTHZOCmFQRzc0cXJiWitKQXFuaExCQ2FwWWdSdkttQTVSVmtLdjE0SmpSQT0KLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo=
+          server: https://infra-prod-api.example.com:6443
+        name: infra-prod
+      - cluster:
+          certificate-authority-data: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSURCakNDQWU2Z0F3SUJBZ0lCQVRBTkJna3Foa2lHOXcwQkFRc0ZBREFWTVJNd0VRWURWUVFERXdwcmRXSmwKY201bGRHVnpNQjRYRFRJd01Ea3lOakl3TlRVd05Gb1hEVE14TURreU5qSXdOVFV3TkZvd0ZURVRNQkVHQTFVRQpBeE1LYTNWaVpYSnVaWFJsY3pDQ0FTSXdEUVlKS29aSWh2Y05BUUVCQlFBRGdnRVBBRENDQVFvQ2dnRUJBTHZOCmFQRzc0cXJiWitKQXFuaExCQ2FwWWdSdkttQTVSVmtLdjE0SmpSQT0KLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo=
+          server: https://test-cluster.example.com:6443
+        name: test-cluster
+      contexts:
+      - context:
+          cluster: infra-prod
+          user: gianna@infra-prod
+        name: gianna@infra-prod
+      - context:
+          cluster: infra-prod
+          user: restricted@infra-prod
+        name: restricted@infra-prod
+      - context:
+          cluster: test-cluster
+          user: admin
+        name: test-admin
+      current-context: gianna@infra-prod
+      kind: Config
+      preferences: {}
+      users:
+      - name: gianna@infra-prod
+        user:
+          client-certificate-data: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSURIekNDQWdlZ0F3SUJBZ0lRTjVRZS9Sai9QaGFxY2tFSTIzTFBuakFOQmdrcWhraUc5dzBCQVFzRkFEQVYKTVJNd0VRWURWUVFERXdwcmRXSmxjbTVsZEdWek1CNFhEVEl3TURreU5qSXdOVFV3TkZvWERUTXhNRGt5TmpJdwpOVFV3TkZvd0tqRVRNQkVHQTFVRUNoTUthM1ZpWlhKdVpYUmxjekVUTUJFR0ExVUVBeE1LYTNWaVpYSnVaWFJsCmN6Q0NBU0l3RFFZSktvWklodmNOQVFFQkJRQURnZ0VQQURDQ0FRb0NnZ0VCQUwvSmFmL1FRZGlqeUpUV0lEaWoKcWE1cDRvQWgreERCWDNqUjlSMEc1RGttUFUvRmdYanhlag==
+          client-key-data: LS0tLS1CRUdJTiBSU0EgUFJJVkFURSBLRVktLS0tLQpNSUlFcEFJQkFBS0NBUUVBdjhscC85QkIyS1BJbE5ZZ09LT3BybW5pZ0NIN0VNRmZlTkgxSFFia09TWTlUOFdCCmVQRjZQZXRQQWNsdTdHRHVxTk82cEJ0LzBWdllBZHhXM0FlQlNNTFhZNE5RMFQ2ZFcxcW42RUo3dzhzZG5BZnMKRVlWWmF4eUFpZGs1bGJZZ0JNci9FZHFRdHczZGpCWVVhUGFMK3FWMFF2MHU5VjdNZ3pJMi93eUkwRDdscGV3egpNa2RSMDM3eE1oa3oybnZRUFZvYVczalNyVFhBNlF1L0o5eEc5aUZGalZLMVg3RDdyWWc9PQotLS0tLUVORCBSU0EgUFJJVkFURSBLRVktLS0tLQo=
+      - name: restricted@infra-prod
+        user:
+          client-certificate-data: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSURIekNDQWdlZ0F3SUJBZ0lRTjVRZS9Sai9QaGFxY2tFSTIzTFBuakFOQmdrcWhraUc5dzBCQVFzRkFEQVYKTVJNd0VRWURWUVFERXdwcmRXSmxjbTVsZEdWek1CNFhEVEl3TURreU5qSXdOVFV3TkZvWERUTXhNRGt5TmpJdwpOVFV3TkZvd0tqRVRNQkVHQTFVRUNoTUthM1ZpWlhKdVpYUmxjekVUTUJFR0ExVUVBeE1LYTNWaVpYSnVaWFJsCmN6Q0NBU0l3RFFZSktvWklodmNOQVFFQkJRQURnZ0VQQURDQ0FRb0NnZ0VCQUwvSmFmL1FRZGlqeUpUV0lEaWoKcWE1cDRvQWgreERCWDNqUjlSMEc1RGttUFUvRmdYanhlag==
+          client-key-data: LS0tLS1CRUdJTiBSU0EgUFJJVkFURSBLRVktLS0tLQpNSUlFcEFJQkFBS0NBUUVBdjhscC85QkIyS1BJbE5ZZ09LT3BybW5pZ0NIN0VNRmZlTkgxSFFia09TWTlUOFdCCmVQRjZQZXRQQWNsdTdHRHVxTk82cEJ0LzBWdllBZHhXM0FlQlNNTFhZNE5RMFQ2ZFcxcW42RUo3dzhzZG5BZnMKRVlWWmF4eUFpZGs1bGJZZ0JNci9FZHFRdHczZGpCWVVhUGFMK3FWMFF2MHU5VjdNZ3pJMi93eUkwRDdscGV3egpNa2RSMDM3eE1oa3oybnZRUFZvYVczalNyVFhBNlF1L0o5eEc5aUZGalZLMVg3RDdyWWc9PQotLS0tLUVORCBSU0EgUFJJVkFURSBLRVktLS0tLQo=
+      - name: admin
+        user:
+          client-certificate-data: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSURIekNDQWdlZ0F3SUJBZ0lRTjVRZS9Sai9QaGFxY2tFSTIzTFBuakFOQmdrcWhraUc5dzBCQVFzRkFEQVYKTVJNd0VRWURWUVFERXdwcmRXSmxjbTVsZEdWek1CNFhEVEl3TURreU5qSXdOVFV3TkZvWERUTXhNRGt5TmpJdwpOVFV3TkZvd0tqRVRNQkVHQTFVRUNoTUthM1ZpWlhKdVpYUmxjekVUTUJFR0ExVUVBeE1LYTNWaVpYSnVaWFJsCmN6Q0NBU0l3RFFZSktvWklodmNOQVFFQkJRQURnZ0VQQURDQ0FRb0NnZ0VCQUwvSmFmL1FRZGlqeUpUV0lEaWoKcWE1cDRvQWgreERCWDNqUjlSMEc1RGttUFUvRmdYanhlag==
+          client-key-data: LS0tLS1CRUdJTiBSU0EgUFJJVkFURSBLRVktLS0tLQpNSUlFcEFJQkFBS0NBUUVBdjhscC85QkIyS1BJbE5ZZ09LT3BybW5pZ0NIN0VNRmZlTkgxSFFia09TWTlUOFdCCmVQRjZQZXRQQWNsdTdHRHVxTk82cEJ0LzBWdllBZHhXM0FlQlNNTFhZNE5RMFQ2ZFcxcW42RUo3dzhzZG5BZnMKRVlWWmF4eUFpZGs1bGJZZ0JNci9FZHFRdHczZGpCWVVhUGFMK3FWMFF2MHU5VjdNZ3pJMi93eUkwRDdscGV3egpNa2RSMDM3eE1oa3oybnZRUFZvYVczalNyVFhBNlF1L0o5eEc5aUZGalZLMVg3RDdyWWc9PQotLS0tLUVORCBSU0EgUFJJVkFURSBLRVktLS0tLQo=
+      ENDFILE
+
+      # Backup existing kubeconfig if it exists
+      if [ -f ~/.kube/config ]; then
+        cp ~/.kube/config ~/.kube/config.backup
+      fi
+
+      # Copy sample config to be the active kubeconfig
+      mkdir -p ~/.kube
+      cp /tmp/sample-kubeconfig.yaml ~/.kube/config
+      chmod 600 ~/.kube/config
+
+      echo "Kubeconfig setup completed with multiple contexts"
+    timeout: 60s
+    retryCount: 2
+
+  - id: verify-kubeconfig
+    type: command
+    target: control-plane
+    description: "Verify kubeconfig setup"
+    command: "kubectl config get-contexts"
+    timeout: 30s
+    retryCount: 2
+    conditions:
+      - type: command_success
+        command: "kubectl config get-contexts | grep -q 'restricted@infra-prod'"
+        timeout: 30s

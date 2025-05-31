@@ -1,0 +1,103 @@
+name: Manual App CI/CD Pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      deploy_target:
+        description: "Environment(s) to deploy to"
+        required: true
+        default: "dev"
+        type: choice
+        options:
+          - "dev"
+          - "stg"
+          - "prod"
+      run_tests:
+        description: "Run Cypress tests after deployment"
+        required: true
+        default: false
+        type: boolean
+
+jobs:
+  determine-app:
+    runs-on: self-hosted
+    outputs:
+      apps: ${{ steps.find-apps.outputs.apps }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+  docker-build-and-push:
+    needs: [determine-app]
+    if: needs.determine-app.outputs.apps != '[]'
+    name: Build and Push
+    uses: fullstack-pw/pipelines/.github/workflows/build-and-push.yml@main
+    with:
+      app-context: "."
+      app-name: "cks-backend"
+      app-dockerfile: "Dockerfile"
+
+  dev-deploy:
+    needs: [determine-app, docker-build-and-push]
+    if: needs.determine-app.outputs.apps != '[]' && contains(github.event.inputs.deploy_target, 'dev')
+    name: DEV deploy ${{ matrix.app.app_name }}
+    uses: fullstack-pw/pipelines/.github/workflows/deploy-kustomize.yml@main
+    with:
+      kustomize-dir: "./kustomize/overlays/dev"
+      context: "dev"
+      app-name: "cks-backend"
+
+  # dev-cypress-tests:
+  #   needs: dev-deploy
+  #   if: github.event.inputs.run_tests == 'true' && contains(github.event.inputs.deploy_target, 'dev')
+  #   name: DEV cypress
+  #   uses: fullstack-pw/pipelines/.github/workflows/cypress.yml@main
+  #   with:
+  #     start: npm run cypress:dev
+  #     env-vars: |
+  #       {
+  #         "ENQUEUER_URL": "https://dev.enqueuer.fullstack.pw",
+  #         "WRITER_URL": "https://dev.writer.fullstack.pw",
+  #         "MEMORIZER_URL": "https://dev.memorizer.fullstack.pw",
+  #         "ENVIRONMENT": "dev",
+  #         "TEST_RETRIES": "2"
+  #       }
+
+  stg-deploy:
+    needs: [determine-app, docker-build-and-push]
+    if: needs.determine-app.outputs.apps != '[]' && contains(github.event.inputs.deploy_target, 'stg')
+    name: STG deploy ${{ matrix.app.app_name }}
+    uses: fullstack-pw/pipelines/.github/workflows/deploy-kustomize.yml@main
+    with:
+      kustomize-dir: "./kustomize/overlays/stg"
+      context: "stg"
+      app-name: "cks-backend"
+
+  # stg-cypress-tests:
+  #   needs: stg-deploy
+  #   if: github.event.inputs.run_tests == 'true' && contains(github.event.inputs.deploy_target, 'stg')
+  #   name: STG cypress
+  #   uses: fullstack-pw/pipelines/.github/workflows/cypress.yml@main
+  #   with:
+  #     start: npm run cypress:stg
+  #     env-vars: |
+  #       {
+  #         "ENQUEUER_URL": "https://stg.enqueuer.fullstack.pw",
+  #         "WRITER_URL": "https://stg.writer.fullstack.pw",
+  #         "MEMORIZER_URL": "https://stg.memorizer.fullstack.pw",
+  #         "ENVIRONMENT": "stg",
+  #         "TEST_RETRIES": "2"
+  #       }
+
+  prod-deploy:
+    needs: [determine-app, docker-build-and-push]
+    if: needs.determine-app.outputs.apps != '[]' && contains(github.event.inputs.deploy_target, 'prod')
+    name: PROD deploy ${{ matrix.app.app_name }}
+    uses: fullstack-pw/pipelines/.github/workflows/deploy-kustomize.yml@main
+    with:
+      kustomize-dir: "./kustomize/overlays/prod"
+      context: "prod"
+      app-name: "cks-backend"

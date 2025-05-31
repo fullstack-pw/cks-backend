@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cks-backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cks-backend
+  template:
+    metadata:
+      labels:
+        app: cks-backend
+    spec:
+      containers:
+        - name: cks-backend
+          image: registry.fullstack.pw/library/cks-backend:latest
+          ports:
+            - containerPort: 8080
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+          env:
+          - name: KUBECONFIG
+            value: /etc/kubeconfig/KUBECONFIG
+          envFrom:
+          - configMapRef:
+              name: cks-backend-config
+          volumeMounts:
+          - name: kubeconfig
+            mountPath: /etc/kubeconfig
+            readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 20
+      volumes:
+      - name: kubeconfig
+        secret:
+          secretName: cluster-secrets
+          items:
+          - key: KUBECONFIG
+            path: KUBECONFIG

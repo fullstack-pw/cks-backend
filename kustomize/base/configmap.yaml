@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cks-backend-config
+data:
+  ENVIRONMENT: env
+  LOG_LEVEL: loglevel
+  LOG_FORMAT: json
+  SERVER_HOST: 0.0.0.0
+  SERVER_PORT: 8080
+  CORS_ALLOW_ORIGIN: "*"
+  KUBECONFIG: /etc/kubeconfig
+  KUBERNETES_SERVICE_PORT: 6443
+  KUBERNETES_SERVICE_HOST: 192.168.1.21
+  KUBERNETES_VERSION: 1.33.0
+  VM_CPU_CORES: 2
+  VM_MEMORY: 2Gi
+  VM_STORAGE_SIZE: 10Gi
+  VM_STORAGE_CLASS: longhorn
+  POD_CIDR: 10.0.0.0/8
+  GOLDEN_IMAGE_NAME: new-golden-image-1-33-0
+  GOLDEN_IMAGE_NAMESPACE: vm-templates
+  VALIDATE_GOLDEN_IMAGE: true
+  TEMPLATE_PATH: /app/templates
+  SCENARIOS_PATH: /app/scenarios

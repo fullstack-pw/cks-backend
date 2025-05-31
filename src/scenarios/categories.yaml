@@ -1,0 +1,24 @@
+categories:
+  pod-security:
+    name: "Pod Security"
+    description: "Scenarios focusing on securing pods and containers"
+
+  network-security:
+    name: "Network Security"
+    description: "Scenarios focusing on secure networking and policies"
+
+  rbac:
+    name: "RBAC and Authentication"
+    description: "Scenarios focusing on access control and authentication"
+
+  secrets-management:
+    name: "Secrets Management"
+    description: "Scenarios focusing on secure secrets handling"
+
+  etcd-security:
+    name: "ETCD Security"
+    description: "Scenarios focusing on securing the Kubernetes data store"
+
+  runtime-security:
+    name: "Runtime Security"
+    description: "Scenarios focusing on container runtime security"
