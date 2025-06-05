@@ -43,6 +43,11 @@ func Logger() gin.HandlerFunc {
 			return
 		}
 
+		// Skip logging for health check endpoints
+		if path == "/health" || path == "/metrics" {
+			return
+		}
+
 		// End timer
 		endTime := time.Now()
 		latency := endTime.Sub(startTime)

@@ -67,7 +67,16 @@ func main() {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
-	router := gin.Default()
+	// Create Gin router without default middleware
+	router := gin.New()
+
+	// Add recovery middleware
+	router.Use(gin.Recovery())
+
+	// Add custom logging middleware that skips health checks
+	router.Use(gin.LoggerWithConfig(gin.LoggerConfig{
+		SkipPaths: []string{"/health", "/metrics"},
+	}))
 
 	// Configure middleware
 	router.Use(cors.New(cors.Config{
