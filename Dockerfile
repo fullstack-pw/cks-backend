@@ -31,8 +31,9 @@ RUN apk --no-cache add \
     ca-certificates \
     curl \
     kubectl \
+    openssh \
     && wget -O /usr/local/bin/virtctl \
-    https://github.com/kubevirt/kubevirt/releases/download/v1.5.0/virtctl-v1.5.0-linux-amd64 \
+    https://github.com/kubevirt/kubevirt/releases/download/v1.5.1/virtctl-v1.5.1-linux-amd64 \
     && chmod +x /usr/local/bin/virtctl
 
 # Create non-root user
@@ -54,6 +55,11 @@ RUN chown -R appuser:appgroup /app
 
 # Switch to non-root user
 USER appuser
+
+# Create SSH directory with proper permissions
+RUN mkdir -p /home/appuser/.ssh && \
+    chown -R appuser:appgroup /home/appuser/.ssh && \
+    chmod 700 /home/appuser/.ssh
 
 # Expose port
 EXPOSE 8080

@@ -65,6 +65,7 @@ func (c *Client) buildVirtctlSSHArgs(namespace, vmName, username string, command
 		"--local-ssh-opts=-o StrictHostKeyChecking=no",
 		"--local-ssh-opts=-o UserKnownHostsFile=/dev/null",
 		"--local-ssh-opts=-o LogLevel=ERROR",
+		"--local-ssh-opts=-i /home/appuser/.ssh/id_ed25519",
 	}
 
 	if command != "" {

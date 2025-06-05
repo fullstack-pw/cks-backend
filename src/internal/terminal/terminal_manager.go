@@ -524,6 +524,7 @@ func (tm *Manager) buildVirtctlSSHArgs(namespace, vmName, username string) []str
 		"--local-ssh-opts=-o StrictHostKeyChecking=no",
 		"--local-ssh-opts=-o UserKnownHostsFile=/dev/null",
 		"--local-ssh-opts=-o LogLevel=ERROR",
+		"--local-ssh-opts=-i /home/appuser/.ssh/id_ed25519",
 	}
 }
 

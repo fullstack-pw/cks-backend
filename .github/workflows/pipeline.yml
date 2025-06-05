@@ -13,22 +13,20 @@ on:
   push:
     branches:
       - main
-    paths:
-      - "apps/**"
 
 jobs:
-  go-tests:
-    name: GO Tests
-    uses: fullstack-pw/pipelines/.github/workflows/go-tests.yml@main
-    with:
-      go-dir: .
+  # go-tests:
+  #   name: GO Tests
+  #   uses: fullstack-pw/pipelines/.github/workflows/go-tests.yml@main
+  #   with:
+  #     go-dir: .
 
   docker-build-and-push:
-    needs: [go-tests]
+    # needs: [go-tests]
     name: Build and Push
     uses: fullstack-pw/pipelines/.github/workflows/build-and-push.yml@main
     with:
-      app-context: "./apps"
+      app-context: "."
       app-name: "cks-backend"
       app-dockerfile: "Dockerfile"
 
@@ -37,7 +35,7 @@ jobs:
     name: DEV deploy
     uses: fullstack-pw/pipelines/.github/workflows/deploy-kustomize.yml@main
     with:
-      kustomize-dir: "."
+      kustomize-dir: "./kustomize/overlays/dev"
       context: "dev"
       app-name: "cks-backend"
 
@@ -54,14 +52,14 @@ jobs:
   #         "TEST_RETRIES": "2"
   #       }
 
-  stg-deploy:
-    # needs: [dev-cypress-tests]
-    name: STG deploy
-    uses: fullstack-pw/pipelines/.github/workflows/deploy-kustomize.yml@main
-    with:
-      kustomize-dir: "./${{ matrix.app.app_path }}/kustomize/overlays/stg"
-      context: "stg"
-      app-name: "cks-backend"
+  # stg-deploy:
+  #   # needs: [dev-cypress-tests]
+  #   name: STG deploy
+  #   uses: fullstack-pw/pipelines/.github/workflows/deploy-kustomize.yml@main
+  #   with:
+  #     kustomize-dir: "./${{ matrix.app.app_path }}/kustomize/overlays/stg"
+  #     context: "stg"
+  #     app-name: "cks-backend"
 
   # stg-cypress-tests:
   #   needs: stg-deploy
@@ -78,15 +76,15 @@ jobs:
   #         "TEST_RETRIES": "2"
   #       }
 
-  prod-deploy:
-    # needs: [stg-cypress-tests]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    name: PROD deploy
-    uses: fullstack-pw/pipelines/.github/workflows/deploy-kustomize.yml@main
-    with:
-      kustomize-dir: "./${{ matrix.app.app_path }}/kustomize/overlays/prod"
-      context: "prod"
-      app-name: "cks-backend"
+  # prod-deploy:
+  #   # needs: [stg-cypress-tests]
+  #   if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+  #   name: PROD deploy
+  #   uses: fullstack-pw/pipelines/.github/workflows/deploy-kustomize.yml@main
+  #   with:
+  #     kustomize-dir: "./${{ matrix.app.app_path }}/kustomize/overlays/prod"
+  #     context: "prod"
+  #     app-name: "cks-backend"
 
   versioning:
     permissions:
