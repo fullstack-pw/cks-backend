@@ -1,0 +1,66 @@
+validation:
+  - id: httpd-deployment-scaled-down
+    type: command
+    command:
+      command: "kubectl get deployment suspicious-httpd -n falco-test -o jsonpath='{.spec.replicas}'"
+      target: control-plane
+    condition: output_equals
+    value: "0"
+    errorMessage: "Suspicious httpd deployment is not scaled down to 0 replicas"
+
+  - id: httpd-pod-terminated
+    type: script
+    script:
+      script: |
+        #!/bin/bash
+        # Check if httpd pods are terminated
+        POD_COUNT=$(kubectl get pods -n falco-test -l app=suspicious-httpd --no-headers | wc -l)
+        if [ "$POD_COUNT" -eq 0 ]; then
+          exit 0
+        else
+          exit 1
+        fi
+      target: control-plane
+      successCode: 0
+    errorMessage: "Httpd pods are still running - they should be terminated"
+
+  - id: nginx-deployment-still-running
+    type: command
+    command:
+      command: "kubectl get deployment suspicious-nginx -n falco-test -o jsonpath='{.spec.replicas}'"
+      target: control-plane
+    condition: output_equals
+    value: "1"
+    errorMessage: "Nginx deployment should still be running (1 replica) for the next task"
+
+  - id: falco-detected-passwd-modification
+    type: script
+    script:
+      script: |
+        #!/bin/bash
+        # Check Falco logs for passwd file modification detection
+        journalctl -u falco --since "10 minutes ago" | grep -i "passwd file modified"
+        if [ $? -eq 0 ]; then
+          exit 0
+        else
+          exit 1
+        fi
+      target: worker
+      successCode: 0
+    errorMessage: "Falco did not detect passwd file modification - check if the httpd container triggered the rule"
+
+  - id: falco-logs-accessible
+    type: script
+    script:
+      script: |
+        #!/bin/bash
+        # Verify we can access Falco logs
+        journalctl -u falco --since "5 minutes ago" | head -n 5
+        if [ $? -eq 0 ]; then
+          exit 0
+        else
+          exit 1
+        fi
+      target: worker
+      successCode: 0
+    errorMessage: "Unable to access Falco logs - check systemd journal access"
