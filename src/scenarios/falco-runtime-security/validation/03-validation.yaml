@@ -1,0 +1,89 @@
+validation:
+  - id: opt-course-directory-exists
+    type: file_exists
+    file:
+      path: "/opt/course/2"
+      target: worker
+    errorMessage: "Directory /opt/course/2 does not exist on worker node"
+
+  - id: falco-log-file-exists
+    type: file_exists
+    file:
+      path: "/opt/course/2/falco.log"
+      target: worker
+    errorMessage: "Falco log file does not exist at /opt/course/2/falco.log"
+
+  - id: falco-log-contains-package-management
+    type: file_content
+    file:
+      path: "/opt/course/2/falco.log"
+      target: worker
+    condition: contains
+    value: "Package management process launched"
+    errorMessage: "Falco log file does not contain package management alerts"
+
+  - id: falco-rule-output-customized
+    type: script
+    script:
+      script: |
+        #!/bin/bash
+        # Check if the rule output format has been customized
+        grep -A 5 "Package management process launched" /etc/falco/rules.d/falco_custom.yaml | grep "evt.time.*container.id.*container.name.*user.name"
+        if [ $? -eq 0 ]; then
+          exit 0
+        else
+          exit 1
+        fi
+      target: worker
+      successCode: 0
+    errorMessage: "Falco rule output format has not been customized correctly - should include time, container_id, container_name, user_name"
+
+  - id: nginx-deployment-scaled-down
+    type: command
+    command:
+      command: "kubectl get deployment suspicious-nginx -n falco-test -o jsonpath='{.spec.replicas}'"
+      target: control-plane
+    condition: output_equals
+    value: "0"
+    errorMessage: "Suspicious nginx deployment is not scaled down to 0 replicas"
+
+  - id: all-test-pods-terminated
+    type: script
+    script:
+      script: |
+        #!/bin/bash
+        # Check if all test pods are terminated
+        POD_COUNT=$(kubectl get pods -n falco-test --no-headers | wc -l)
+        if [ "$POD_COUNT" -eq 0 ]; then
+          exit 0
+        else
+          exit 1
+        fi
+      target: control-plane
+      successCode: 0
+    errorMessage: "Some test pods are still running - all pods should be terminated"
+
+  - id: falco-log-file-size
+    type: script
+    script:
+      script: |
+        #!/bin/bash
+        # Check if log file has content (at least 20 seconds of logs should have some content)
+        FILE_SIZE=$(stat -c%s /opt/course/2/falco.log)
+        if [ "$FILE_SIZE" -gt 100 ]; then
+          exit 0
+        else
+          exit 1
+        fi
+      target: worker
+      successCode: 0
+    errorMessage: "Falco log file is too small - ensure logs were collected for at least 20 seconds"
+
+  - id: falco-still-running
+    type: command
+    command:
+      command: "systemctl is-active falco"
+      target: worker
+    condition: output_equals
+    value: "active"
+    errorMessage: "Falco service should still be running after completing all tasks"

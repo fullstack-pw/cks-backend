@@ -1,0 +1,207 @@
+steps:
+  - id: install-falco-on-worker
+    type: script
+    target: worker
+    description: "Install Falco on worker node"
+    script: |
+      #!/bin/bash
+      set -e
+
+      # Install required packages with sudo
+      sudo apt-get update
+      sudo apt-get install -y gnupg2 software-properties-common curl
+
+      # Add Falco repository
+      curl -fsSL https://falco.org/repo/falcosecurity-packages.asc | sudo gpg --dearmor -o /usr/share/keyrings/falco-archive-keyring.gpg
+      echo "deb [signed-by=/usr/share/keyrings/falco-archive-keyring.gpg] https://download.falco.org/packages/deb stable main" | sudo tee -a /etc/apt/sources.list.d/falcosecurity.list
+
+      # Install Falco
+      sudo apt-get update
+      sudo apt-get install -y falco
+
+      # Enable and start Falco service
+      sudo systemctl enable falco
+      sudo systemctl start falco
+
+      # Verify installation
+      falco --version
+
+      echo "Falco installation completed"
+    timeout: 300s
+    retryCount: 2
+
+  - id: create-falco-custom-rules
+    type: script
+    target: worker
+    description: "Create custom Falco rules file"
+    script: |
+      #!/bin/bash
+      set -e
+
+      # Create custom rules directory if it doesn't exist
+      sudo mkdir -p /etc/falco/rules.d
+
+      # Create custom Falco rules file
+      sudo tee /etc/falco/rules.d/falco_custom.yaml > /dev/null << 'EOF'
+      # Custom Falco Rules for CKS Training
+
+      # Rule to detect modifications to /etc/passwd
+      - rule: Detect passwd file modification
+        desc: Detect any modification to /etc/passwd file
+        condition: >
+          open_write and container and
+          fd.filename=/etc/passwd
+        output: >
+          Passwd file modified (user=%user.name container_id=%container.id 
+          container_name=%container.name image=%container.image.repository:%container.image.tag 
+          file=%fd.name)
+        priority: WARNING
+        tags: [filesystem, mitre_persistence]
+
+      # Rule to detect package management processes
+      - rule: Package management process launched
+        desc: Detect package management tools execution
+        condition: >
+          spawned_process and container and
+          (proc.name in (apt, apt-get, yum, rpm, dpkg, pip, pip3, npm, gem, composer))
+        output: >
+          Package management process launched (time=%evt.time.iso8601 
+          container_id=%container.id container_name=%container.name 
+          user_name=%user.name proc_name=%proc.name proc_cmdline=%proc.cmdline)
+        priority: WARNING
+        tags: [process, mitre_execution]
+      EOF
+
+      echo "Custom Falco rules created"
+    timeout: 60s
+    retryCount: 2
+
+  - id: restart-falco-with-custom-rules
+    type: script
+    target: worker
+    description: "Restart Falco to load custom rules"
+    script: |
+      #!/bin/bash
+      set -e
+
+      # Restart Falco service to load new rules
+      sudo systemctl restart falco
+      sleep 5
+
+      # Verify Falco is running
+      sudo systemctl is-active falco
+
+      # Check if custom rules are loaded
+      falco --list | grep -E "(Detect passwd file modification|Package management process launched)" || {
+        echo "Custom rules not found in Falco rule list"
+        exit 1
+      }
+
+      echo "Falco restarted with custom rules"
+    timeout: 60s
+    retryCount: 2
+
+  - id: create-test-deployments
+    type: script
+    target: control-plane
+    description: "Create test deployments for Falco monitoring"
+    script: |
+      #!/bin/bash
+      set -e
+
+      # Create namespace for test applications
+      kubectl create namespace falco-test || true
+
+      # Get the actual worker node name
+      WORKER_NODE=$(kubectl get nodes --no-headers | grep -v master | grep -v control-plane | head -n1 | awk '{print $1}')
+      echo "Using worker node: $WORKER_NODE"
+
+      # Create httpd deployment that will modify /etc/passwd
+      cat << EOF | kubectl apply -f -
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: suspicious-httpd
+        namespace: falco-test
+        labels:
+          app: suspicious-httpd
+      spec:
+        replicas: 1
+        selector:
+          matchLabels:
+            app: suspicious-httpd
+        template:
+          metadata:
+            labels:
+              app: suspicious-httpd
+          spec:
+            nodeSelector:
+              kubernetes.io/hostname: $WORKER_NODE
+            containers:
+            - name: httpd
+              image: httpd:2.4
+              command: ["/bin/bash"]
+              args:
+                - -c
+                - |
+                  # Start httpd in background
+                  httpd-foreground &
+                  # Wait a bit then modify /etc/passwd
+                  sleep 30
+                  echo "testuser:x:1001:1001:Test User:/tmp:/bin/bash" >> /etc/passwd
+                  # Keep container running
+                  tail -f /dev/null
+              securityContext:
+                runAsUser: 0
+      EOF
+
+      # Create nginx deployment that will trigger package management
+      cat << EOF | kubectl apply -f -
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: suspicious-nginx
+        namespace: falco-test
+        labels:
+          app: suspicious-nginx
+      spec:
+        replicas: 1
+        selector:
+          matchLabels:
+            app: suspicious-nginx
+        template:
+          metadata:
+            labels:
+              app: suspicious-nginx
+          spec:
+            nodeSelector:
+              kubernetes.io/hostname: $WORKER_NODE
+            containers:
+            - name: nginx
+              image: nginx:1.20
+              command: ["/bin/bash"]
+              args:
+                - -c
+                - |
+                  # Start nginx in background
+                  nginx -g 'daemon off;' &
+                  # Wait a bit then run package management
+                  sleep 45
+                  apt-get update
+                  # Keep container running
+                  tail -f /dev/null
+              securityContext:
+                runAsUser: 0
+      EOF
+
+      echo "Test deployments created"
+    timeout: 120s
+    retryCount: 2
+
+  - id: wait-for-pods-ready
+    type: command
+    target: control-plane
+    description: "Wait for test pods to be ready"
+    command: "kubectl wait --for=condition=Ready pod -l app=suspicious-httpd -n falco-test --timeout=60s && kubectl wait --for=condition=Ready pod -l app=suspicious-nginx -n falco-test --timeout=60s"
+    timeout: 90s
+    retryCount: 3

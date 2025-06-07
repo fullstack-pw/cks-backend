@@ -1,0 +1,74 @@
+validation:
+  - id: falco-service-running
+    type: command
+    command:
+      command: "systemctl is-active falco"
+      target: worker
+    condition: output_equals
+    value: "active"
+    errorMessage: "Falco service is not running on worker node"
+
+  - id: falco-custom-rules-exist
+    type: file_exists
+    file:
+      path: "/etc/falco/rules.d/falco_custom.yaml"
+      target: worker
+    errorMessage: "Custom Falco rules file does not exist at /etc/falco/rules.d/falco_custom.yaml"
+
+  - id: falco-custom-rules-content
+    type: file_content
+    file:
+      path: "/etc/falco/rules.d/falco_custom.yaml"
+      target: worker
+    condition: contains
+    value: "Detect passwd file modification"
+    errorMessage: "Custom rules file does not contain the passwd modification rule"
+
+  - id: falco-package-rule-content
+    type: file_content
+    file:
+      path: "/etc/falco/rules.d/falco_custom.yaml"
+      target: worker
+    condition: contains
+    value: "Package management process launched"
+    errorMessage: "Custom rules file does not contain the package management rule"
+
+  - id: falco-test-namespace-exists
+    type: resource_exists
+    resource:
+      kind: Namespace
+      name: falco-test
+      namespace: ""
+    errorMessage: "Test namespace 'falco-test' does not exist"
+
+  - id: suspicious-httpd-deployment-exists
+    type: resource_exists
+    resource:
+      kind: Deployment
+      name: suspicious-httpd
+      namespace: falco-test
+    errorMessage: "Suspicious httpd deployment does not exist in falco-test namespace"
+
+  - id: suspicious-nginx-deployment-exists
+    type: resource_exists
+    resource:
+      kind: Deployment
+      name: suspicious-nginx
+      namespace: falco-test
+    errorMessage: "Suspicious nginx deployment does not exist in falco-test namespace"
+
+  - id: falco-rules-loaded
+    type: script
+    script:
+      script: |
+        #!/bin/bash
+        # Check if custom rules are loaded in Falco
+        falco --list | grep -E "(Detect passwd file modification|Package management process launched)"
+        if [ $? -eq 0 ]; then
+          exit 0
+        else
+          exit 1
+        fi
+      target: worker
+      successCode: 0
+    errorMessage: "Custom Falco rules are not loaded properly"
