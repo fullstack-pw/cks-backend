@@ -1,11 +1,4 @@
 validation:
-  - id: directory-exists
-    type: file_exists
-    file:
-      path: "/home/suporte/1"
-      target: control-plane
-    errorMessage: "Directory /home/suporte/1 does not exist"
-
   - id: contexts-file-exists
     type: file_exists
     file:
@@ -44,7 +37,9 @@ validation:
       script: |
         #!/bin/bash
         # Check if certificate is properly decoded (not base64 encoded)
-        if grep -q "BEGIN CERTIFICATE" /home/suporte/1/cert && ! grep -q "^[A-Za-z0-9+/=]*$" /home/suporte/1/cert; then
+        real_cert=$(echo 'LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSURIekNDQWdlZ0F3SUJBZ0lRTjVRZS9Sai9QaGFxY2tFSTIzTFBuakFOQmdrcWhraUc5dzBCQVFzRkFEQVYKTVJNd0VRWURWUVFERXdwcmRXSmxjbTVsZEdWek1CNFhEVEl3TURreU5qSXdOVFV3TkZvWERUTXhNRGt5TmpJdwpOVFV3TkZvd0tqRVRNQkVHQTFVRUNoTUthM1ZpWlhKdVpYUmxjekVUTUJFR0ExVUVBeE1LYTNWaVpYSnVaWFJsCmN6Q0NBU0l3RFFZSktvWklodmNOQVFFQkJRQURnZ0VQQURDQ0FRb0NnZ0VCQUwvSmFmL1FRZGlqeUpUV0lEaWoKcWE1cDRvQWgreERCWDNqUjlSMEc1RGttUFUvRmdYanhlag=='|base64 -d)
+        user_cert=$(cat /home/suporte/1/cert)
+        if [[ $real_cert == $user_cert ]]; then
           exit 0
         else
           exit 1
