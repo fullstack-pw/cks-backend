@@ -69,3 +69,33 @@ runcmd:
   # Change default shell for suporte user
   - usermod -s /bin/bash suporte
   - echo 'alias k=kubectl' >> /home/suporte/.bashrc
+
+  # Capture current network configuration from DHCP
+  - |
+    INTERFACE=$(ip route | grep default | awk '{print $5}' | head -n1)
+    CURRENT_IP=$(ip addr show $INTERFACE | grep 'inet ' | awk '{print $2}' | cut -d'/' -f1)
+    NETMASK=$(ip addr show $INTERFACE | grep 'inet ' | awk '{print $2}' | cut -d'/' -f2)
+    GATEWAY=$(ip route | grep default | awk '{print $3}' | head -n1)
+    DNS_SERVERS=$(grep '^nameserver' /etc/resolv.conf | awk '{print $2}' | head -n1)
+
+    echo "Current network config: IP=$CURRENT_IP/$NETMASK, GW=$GATEWAY, DNS=$DNS_SERVERS"
+
+    # Create static netplan configuration
+    cat > /etc/netplan/01-static-config.yaml << EOF
+    network:
+      version: 2
+      ethernets:
+        $INTERFACE:
+          dhcp4: false
+          addresses:
+            - $CURRENT_IP/$NETMASK
+          gateway4: $GATEWAY
+          nameservers:
+            addresses:
+              - $DNS_SERVERS
+              - 8.8.8.8
+    EOF
+
+    # Apply the static configuration
+    netplan apply
+    echo "Static IP configuration applied: $CURRENT_IP"
