@@ -148,6 +148,7 @@ func (m *Manager) ReleaseCluster(sessionID string) error {
 				"sessionID": sessionID,
 			}).Info("Cluster released and marked for reset")
 
+			// Trigger async reset
 			go m.resetClusterAsync(clusterID)
 
 			return nil
@@ -186,7 +187,8 @@ func (m *Manager) ReleaseAllClusters() error {
 			}(),
 		}).Info("Cluster released and marked for reset")
 
-		m.resetClusterAsync(clusterID)
+		// Trigger async reset
+		go m.resetClusterAsync(clusterID)
 
 	}
 
