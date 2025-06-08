@@ -10,6 +10,7 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"github.com/fullstack-pw/cks/backend/internal/kubevirt"
+	"github.com/fullstack-pw/cks/backend/internal/models"
 	"github.com/fullstack-pw/cks/backend/internal/sessions"
 )
 
@@ -36,6 +37,8 @@ func (ac *AdminController) RegisterRoutes(router *gin.Engine) {
 		admin.POST("/bootstrap-pool", ac.BootstrapClusterPool)
 		admin.POST("/create-snapshots", ac.CreatePoolSnapshots)
 		admin.POST("/release-all-clusters", ac.ReleaseAllClusters)
+		admin.GET("/clusters", ac.GetClusterPoolStatus)
+		admin.GET("/sessions", ac.GetAdminSessions)
 	}
 }
 
@@ -111,7 +114,7 @@ func (ac *AdminController) ReleaseAllClusters(c *gin.Context) {
 	}
 
 	// Get current pool status after release
-	poolStats := ac.sessionManager.GetClusterPool().GetPoolStatus()
+	poolStats := ac.sessionManager.GetClusterPool().GetPoolStatus(false)
 
 	ac.logger.Info("All applicable clusters released successfully")
 	c.JSON(http.StatusOK, gin.H{
@@ -177,4 +180,50 @@ func (ac *AdminController) createClusterSnapshots(ctx context.Context, clusterID
 		},
 		"namespace": namespace,
 	}, nil
+}
+
+// GetClusterPoolStatus returns detailed cluster pool status for admin dashboard
+func (ac *AdminController) GetClusterPoolStatus(c *gin.Context) {
+	ac.logger.Info("Admin request for cluster pool status")
+
+	// Get detailed cluster information using existing function with detailed=true
+	poolStatus := ac.sessionManager.GetClusterPool().GetPoolStatus(true)
+
+	c.JSON(http.StatusOK, poolStatus)
+}
+
+// GetAdminSessions returns sessions list optimized for admin dashboard
+func (ac *AdminController) GetAdminSessions(c *gin.Context) {
+	ac.logger.Info("Admin request for sessions list")
+
+	// Use existing ListSessions function - it already has all the data we need
+	sessions := ac.sessionManager.ListSessions()
+
+	// Return sessions with basic stats
+	response := gin.H{
+		"sessions": sessions,
+		"stats": gin.H{
+			"totalSessions": len(sessions),
+			"runningSessions": func() int {
+				count := 0
+				for _, s := range sessions {
+					if s.Status == models.SessionStatusRunning {
+						count++
+					}
+				}
+				return count
+			}(),
+			"provisioningSessions": func() int {
+				count := 0
+				for _, s := range sessions {
+					if s.Status == models.SessionStatusProvisioning {
+						count++
+					}
+				}
+				return count
+			}(),
+		},
+	}
+
+	c.JSON(http.StatusOK, response)
 }

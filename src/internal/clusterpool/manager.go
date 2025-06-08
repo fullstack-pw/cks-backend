@@ -205,18 +205,31 @@ func (m *Manager) ReleaseAllClusters() error {
 	return nil
 }
 
-// GetPoolStatus returns current pool statistics
-func (m *Manager) GetPoolStatus() *models.ClusterPoolStats {
+// GetPoolStatus returns current pool statistics with optional detailed cluster information
+func (m *Manager) GetPoolStatus(detailed ...bool) *models.ClusterPoolStats {
 	m.lock.RLock()
 	defer m.lock.RUnlock()
+
+	isDetailed := len(detailed) > 0 && detailed[0]
 
 	stats := &models.ClusterPoolStats{
 		TotalClusters:   len(m.clusters),
 		StatusByCluster: make(map[string]models.ClusterStatus),
 	}
 
+	// Initialize DetailedClusters if detailed info is requested
+	if isDetailed {
+		stats.DetailedClusters = make(map[string]*models.ClusterPool)
+	}
+
 	for clusterID, cluster := range m.clusters {
 		stats.StatusByCluster[clusterID] = cluster.Status
+
+		// Add detailed cluster info if requested
+		if isDetailed {
+			clusterCopy := *cluster
+			stats.DetailedClusters[clusterID] = &clusterCopy
+		}
 
 		switch cluster.Status {
 		case models.StatusAvailable:

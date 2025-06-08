@@ -241,7 +241,6 @@ const (
 	StatusCreating  ClusterStatus = "creating"  // Initial bootstrap in progress
 )
 
-// ClusterPoolStats provides pool-wide statistics
 type ClusterPoolStats struct {
 	TotalClusters     int                      `json:"totalClusters"`
 	AvailableClusters int                      `json:"availableClusters"`
@@ -249,4 +248,5 @@ type ClusterPoolStats struct {
 	ResettingClusters int                      `json:"resettingClusters"`
 	ErrorClusters     int                      `json:"errorClusters"`
 	StatusByCluster   map[string]ClusterStatus `json:"statusByCluster"`
+	DetailedClusters  map[string]*ClusterPool  `json:"detailedClusters,omitempty"` // Add this field
 }
