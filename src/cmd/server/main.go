@@ -1,5 +1,3 @@
-// backend/cmd/server/main.go
-
 package main
 
 import (
@@ -30,6 +28,88 @@ import (
 	"github.com/fullstack-pw/cks/backend/internal/terminal"
 	"github.com/fullstack-pw/cks/backend/internal/validation"
 )
+
+// createKubernetesConfig creates Kubernetes config with explicit context selection
+func createKubernetesConfig(cfg *config.Config, logger *logrus.Logger) (*rest.Config, error) {
+	var k8sConfig *rest.Config
+	var err error
+
+	logger.WithFields(logrus.Fields{
+		"kubeconfigPath":    cfg.KubeconfigPath,
+		"kubernetesContext": cfg.KubernetesContext,
+	}).Info("Creating Kubernetes client configuration")
+
+	if cfg.KubeconfigPath != "" {
+		// Load kubeconfig and explicitly set context
+		k8sConfig, err = createConfigWithContext(cfg.KubeconfigPath, cfg.KubernetesContext, logger)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build kubeconfig with context: %w", err)
+		}
+	} else {
+		// Use in-cluster configuration
+		logger.Info("Using in-cluster Kubernetes configuration")
+		k8sConfig, err = rest.InClusterConfig()
+		if err != nil {
+			return nil, fmt.Errorf("failed to create in-cluster config: %w", err)
+		}
+	}
+
+	return k8sConfig, nil
+}
+
+// createConfigWithContext creates a Kubernetes config using specific context
+func createConfigWithContext(kubeconfigPath, contextName string, logger *logrus.Logger) (*rest.Config, error) {
+	// Load the kubeconfig file
+	configLoader := &clientcmd.ClientConfigLoadingRules{
+		ExplicitPath: kubeconfigPath,
+	}
+
+	// Load raw config
+	rawConfig, err := configLoader.Load()
+	if err != nil {
+		return nil, fmt.Errorf("failed to load kubeconfig from %s: %w", kubeconfigPath, err)
+	}
+
+	// Validate that the desired context exists
+	if _, exists := rawConfig.Contexts[contextName]; !exists {
+		availableContexts := make([]string, 0, len(rawConfig.Contexts))
+		for ctx := range rawConfig.Contexts {
+			availableContexts = append(availableContexts, ctx)
+		}
+
+		logger.WithFields(logrus.Fields{
+			"requestedContext":  contextName,
+			"availableContexts": availableContexts,
+		}).Error("Requested Kubernetes context not found")
+
+		return nil, fmt.Errorf("context '%s' not found in kubeconfig. Available contexts: %v", contextName, availableContexts)
+	}
+
+	// Override the current context
+	configOverrides := &clientcmd.ConfigOverrides{
+		CurrentContext: contextName,
+	}
+
+	// Create client config with explicit context
+	clientConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
+		configLoader,
+		configOverrides,
+	)
+
+	// Build REST config
+	config, err := clientConfig.ClientConfig()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create client config for context '%s': %w", contextName, err)
+	}
+
+	// Log successful context selection
+	logger.WithFields(logrus.Fields{
+		"context": contextName,
+		"server":  config.Host,
+	}).Info("Successfully created Kubernetes config with explicit context")
+
+	return config, nil
+}
 
 func main() {
 	logger := logrus.New()
@@ -96,19 +176,10 @@ func main() {
 	})
 	router.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
-	// Create Kubernetes client configuration
-	var k8sConfig *rest.Config
-	if os.Getenv("KUBECONFIG") != "" {
-		k8sConfig, err = clientcmd.BuildConfigFromFlags("", os.Getenv("KUBECONFIG"))
-		if err != nil {
-			logger.WithError(err).Fatal("Failed to build kubeconfig")
-		}
-	} else {
-		// Use in-cluster configuration
-		k8sConfig, err = rest.InClusterConfig()
-		if err != nil {
-			logger.WithError(err).Fatal("Failed to create in-cluster config")
-		}
+	// Create Kubernetes client configuration with explicit context
+	k8sConfig, err := createKubernetesConfig(cfg, logger)
+	if err != nil {
+		logger.WithError(err).Fatal("Failed to create Kubernetes configuration")
 	}
 
 	// Create Kubernetes client
@@ -123,6 +194,7 @@ func main() {
 		logger.WithError(err).Fatal("Failed to create kubevirt client")
 	}
 
+	// Rest of the main function remains the same...
 	// Create unified validator (ADD THIS)
 	unifiedValidator := validation.NewUnifiedValidator(kubevirtClient, logger)
 
