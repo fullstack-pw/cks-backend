@@ -31,12 +31,13 @@ import (
 
 // Client represents a KubeVirt client for managing VMs
 type Client struct {
-	kubeClient    kubernetes.Interface
-	virtClient    kubecli.KubevirtClient
-	config        *config.Config
-	restConfig    *rest.Config
-	templateCache map[string]*template.Template
-	logger        *logrus.Logger
+	kubeClient        kubernetes.Interface
+	virtClient        kubecli.KubevirtClient
+	config            *config.Config
+	restConfig        *rest.Config
+	templateCache     map[string]*template.Template
+	logger            *logrus.Logger
+	kubernetesContext string // ADD THIS FIELD
 }
 
 // Retry configuration constants
@@ -66,6 +67,14 @@ func (c *Client) buildVirtctlSSHArgs(namespace, vmName, username string, command
 		"--local-ssh-opts=-o UserKnownHostsFile=/dev/null",
 		"--local-ssh-opts=-o LogLevel=ERROR",
 		"--local-ssh-opts=-i /home/appuser/.ssh/id_ed25519",
+	}
+
+	// ADD KUBECONFIG AND CONTEXT IF AVAILABLE
+	if kubeconfigPath := os.Getenv("KUBECONFIG"); kubeconfigPath != "" {
+		args = append(args, "--kubeconfig="+kubeconfigPath)
+		if c.kubernetesContext != "" {
+			args = append(args, "--context="+c.kubernetesContext)
+		}
 	}
 
 	if command != "" {
@@ -140,7 +149,7 @@ func NewClient(restConfig *rest.Config, logger *logrus.Logger) (*Client, error) 
 		return nil, fmt.Errorf("failed to create kubernetes client: %v", err)
 	}
 
-	// Create kubevirt client
+	// Create kubevirt client with the same config (already has correct context)
 	virtClient, err := kubecli.GetKubevirtClientFromRESTConfig(restConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create kubevirt client: %v", err)
@@ -165,12 +174,13 @@ func NewClient(restConfig *rest.Config, logger *logrus.Logger) (*Client, error) 
 	}
 
 	return &Client{
-		kubeClient:    kubeClient,
-		virtClient:    virtClient,
-		config:        cfg,
-		restConfig:    restConfig,
-		templateCache: templateCache,
-		logger:        logger,
+		kubeClient:        kubeClient,
+		virtClient:        virtClient,
+		config:            cfg,
+		restConfig:        restConfig,
+		templateCache:     templateCache,
+		logger:            logger,
+		kubernetesContext: cfg.KubernetesContext, // STORE THE CONTEXT
 	}, nil
 }
 

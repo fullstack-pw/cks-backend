@@ -516,7 +516,7 @@ func (tm *Manager) GetOrCreatePersistentSSH(sessionID, namespace, target string)
 
 // buildVirtctlSSHArgs builds standardized virtctl ssh arguments for terminal connections
 func (tm *Manager) buildVirtctlSSHArgs(namespace, vmName, username string) []string {
-	return []string{
+	args := []string{
 		"ssh",
 		fmt.Sprintf("vmi/%s", vmName),
 		"--namespace=" + namespace,
@@ -526,6 +526,16 @@ func (tm *Manager) buildVirtctlSSHArgs(namespace, vmName, username string) []str
 		"--local-ssh-opts=-o LogLevel=ERROR",
 		"--local-ssh-opts=-i /home/appuser/.ssh/id_ed25519",
 	}
+
+	// ADD KUBECONFIG AND CONTEXT SUPPORT
+	if kubeconfigPath := os.Getenv("KUBECONFIG"); kubeconfigPath != "" {
+		args = append(args, "--kubeconfig="+kubeconfigPath)
+		if kubernetesContext := os.Getenv("KUBERNETES_CONTEXT"); kubernetesContext != "" {
+			args = append(args, "--context="+kubernetesContext)
+		}
+	}
+
+	return args
 }
 
 // createPersistentSSHConnection creates a new persistent SSH connection
@@ -535,6 +545,7 @@ func (tm *Manager) createPersistentSSHConnection(sessionID, namespace, target, c
 	if err != nil {
 		return nil, fmt.Errorf("failed to get VM name: %w", err)
 	}
+
 	// Validate inputs
 	if sessionID == "" {
 		return nil, fmt.Errorf("sessionID cannot be empty")
@@ -545,6 +556,7 @@ func (tm *Manager) createPersistentSSHConnection(sessionID, namespace, target, c
 	if vmName == "" {
 		return nil, fmt.Errorf("vmName cannot be empty")
 	}
+
 	// Test SSH connection before creating persistent connection
 	testCtx, cancelTest := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancelTest()
@@ -566,7 +578,8 @@ func (tm *Manager) createPersistentSSHConnection(sessionID, namespace, target, c
 	}
 
 	tm.logger.WithField("vmName", vmName).Info("SSH connectivity test passed, proceeding with persistent connection")
-	// Create the virtctl ssh command
+
+	// Create the virtctl ssh command with context support
 	args := tm.buildVirtctlSSHArgs(namespace, vmName, "suporte")
 
 	tm.logger.WithFields(logrus.Fields{
@@ -575,11 +588,12 @@ func (tm *Manager) createPersistentSSHConnection(sessionID, namespace, target, c
 		"connectionKey": connectionKey,
 		"vmName":        vmName,
 		"namespace":     namespace,
-	}).Debug("Creating persistent SSH connection with updated arguments")
+	}).Debug("Creating persistent SSH connection with context-aware arguments")
 
 	// Create the command
 	cmd := exec.Command("virtctl", args...)
 
+	// Rest of the function remains the same...
 	// Create a pty for the command
 	ptmx, err := pty.Start(cmd)
 	if err != nil {
@@ -816,7 +830,7 @@ func (tm *Manager) testSSHConnection(ctx context.Context, namespace, vmName stri
 		"vmName":    vmName,
 	}).Debug("Testing SSH connection to VM")
 
-	// Create a simple test command
+	// Create a simple test command with context support
 	args := tm.buildVirtctlSSHArgs(namespace, vmName, "suporte")
 	args = append(args, "--command=echo 'SSH connection test successful'")
 
