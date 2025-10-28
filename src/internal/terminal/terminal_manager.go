@@ -659,14 +659,18 @@ func (tm *Manager) createPersistentSSHConnection(sessionID, namespace, target, c
 	// Create the command
 	cmd := exec.Command("virtctl", args...)
 
-	// IMPORTANT: Unset KUBECONFIG env var because virtctl ignores --kubeconfig flag when KUBECONFIG is set
-	var envWithoutKubeconfig []string
+	// IMPORTANT: virtctl ignores --kubeconfig flag, so we override KUBECONFIG env var
+	var envWithCustomKubeconfig []string
+	tempKubeconfigPath, _ := tm.getOrCreateTempKubeconfig()
 	for _, env := range os.Environ() {
 		if !strings.HasPrefix(env, "KUBECONFIG=") {
-			envWithoutKubeconfig = append(envWithoutKubeconfig, env)
+			envWithCustomKubeconfig = append(envWithCustomKubeconfig, env)
 		}
 	}
-	cmd.Env = envWithoutKubeconfig
+	if tempKubeconfigPath != "" {
+		envWithCustomKubeconfig = append(envWithCustomKubeconfig, "KUBECONFIG="+tempKubeconfigPath)
+	}
+	cmd.Env = envWithCustomKubeconfig
 
 	// Rest of the function remains the same...
 	// Create a pty for the command
@@ -915,14 +919,18 @@ func (tm *Manager) testSSHConnection(ctx context.Context, namespace, vmName stri
 
 	cmd := exec.CommandContext(testCtx, "virtctl", args...)
 
-	// IMPORTANT: Unset KUBECONFIG env var because virtctl ignores --kubeconfig flag when KUBECONFIG is set
-	var envWithoutKubeconfig []string
+	// IMPORTANT: virtctl ignores --kubeconfig flag, so we override KUBECONFIG env var
+	var envWithCustomKubeconfig []string
+	tempKubeconfigPath, _ := tm.getOrCreateTempKubeconfig()
 	for _, env := range os.Environ() {
 		if !strings.HasPrefix(env, "KUBECONFIG=") {
-			envWithoutKubeconfig = append(envWithoutKubeconfig, env)
+			envWithCustomKubeconfig = append(envWithCustomKubeconfig, env)
 		}
 	}
-	cmd.Env = envWithoutKubeconfig
+	if tempKubeconfigPath != "" {
+		envWithCustomKubeconfig = append(envWithCustomKubeconfig, "KUBECONFIG="+tempKubeconfigPath)
+	}
+	cmd.Env = envWithCustomKubeconfig
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout

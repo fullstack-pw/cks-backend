@@ -657,15 +657,19 @@ func (c *Client) getJoinCommand(ctx context.Context, namespace, controlPlaneName
 	args := c.buildVirtctlSSHArgs(namespace, actualVMName, "suporte", "cat /etc/kubeadm-join-command")
 	cmd := exec.Command("virtctl", args...)
 
-	// IMPORTANT: Unset KUBECONFIG env var because virtctl ignores --kubeconfig flag when KUBECONFIG is set
-	// Filter out KUBECONFIG from environment variables
-	var envWithoutKubeconfig []string
+	// IMPORTANT: virtctl ignores --kubeconfig flag, so we override KUBECONFIG env var
+	// We set KUBECONFIG to our temp kubeconfig path instead of unsetting it completely
+	var envWithCustomKubeconfig []string
+	tempKubeconfigPath, _ := c.getOrCreateTempKubeconfig()
 	for _, env := range os.Environ() {
 		if !strings.HasPrefix(env, "KUBECONFIG=") {
-			envWithoutKubeconfig = append(envWithoutKubeconfig, env)
+			envWithCustomKubeconfig = append(envWithCustomKubeconfig, env)
 		}
 	}
-	cmd.Env = envWithoutKubeconfig
+	if tempKubeconfigPath != "" {
+		envWithCustomKubeconfig = append(envWithCustomKubeconfig, "KUBECONFIG="+tempKubeconfigPath)
+	}
+	cmd.Env = envWithCustomKubeconfig
 
 	c.logger.WithField("command", cmd.String()).Debug("Executing virtctl command")
 
@@ -787,14 +791,18 @@ func (c *Client) executeCommandDirect(ctx context.Context, namespace, vmName, co
 
 	cmd := exec.CommandContext(ctx, "virtctl", args...)
 
-	// IMPORTANT: Unset KUBECONFIG env var because virtctl ignores --kubeconfig flag when KUBECONFIG is set
-	var envWithoutKubeconfig []string
+	// IMPORTANT: virtctl ignores --kubeconfig flag, so we override KUBECONFIG env var
+	var envWithCustomKubeconfig []string
+	tempKubeconfigPath, _ := c.getOrCreateTempKubeconfig()
 	for _, env := range os.Environ() {
 		if !strings.HasPrefix(env, "KUBECONFIG=") {
-			envWithoutKubeconfig = append(envWithoutKubeconfig, env)
+			envWithCustomKubeconfig = append(envWithCustomKubeconfig, env)
 		}
 	}
-	cmd.Env = envWithoutKubeconfig
+	if tempKubeconfigPath != "" {
+		envWithCustomKubeconfig = append(envWithCustomKubeconfig, "KUBECONFIG="+tempKubeconfigPath)
+	}
+	cmd.Env = envWithCustomKubeconfig
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -1255,14 +1263,18 @@ func (c *Client) IsVMSSHReady(ctx context.Context, namespace, vmName string) (bo
 	args := c.buildVirtctlSSHArgs(namespace, vmName, "suporte", "echo 'ssh-ready-test'")
 	cmd := exec.CommandContext(testCtx, "virtctl", args...)
 
-	// IMPORTANT: Unset KUBECONFIG env var because virtctl ignores --kubeconfig flag when KUBECONFIG is set
-	var envWithoutKubeconfig []string
+	// IMPORTANT: virtctl ignores --kubeconfig flag, so we override KUBECONFIG env var
+	var envWithCustomKubeconfig []string
+	tempKubeconfigPath, _ := c.getOrCreateTempKubeconfig()
 	for _, env := range os.Environ() {
 		if !strings.HasPrefix(env, "KUBECONFIG=") {
-			envWithoutKubeconfig = append(envWithoutKubeconfig, env)
+			envWithCustomKubeconfig = append(envWithCustomKubeconfig, env)
 		}
 	}
-	cmd.Env = envWithoutKubeconfig
+	if tempKubeconfigPath != "" {
+		envWithCustomKubeconfig = append(envWithCustomKubeconfig, "KUBECONFIG="+tempKubeconfigPath)
+	}
+	cmd.Env = envWithCustomKubeconfig
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
