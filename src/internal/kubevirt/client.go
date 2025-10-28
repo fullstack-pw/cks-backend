@@ -57,25 +57,29 @@ type RetryConfig struct {
 }
 
 // buildVirtctlSSHArgs builds standardized virtctl ssh arguments
+// Note: Global flags (--kubeconfig, --context) must come BEFORE the ssh subcommand
 func (c *Client) buildVirtctlSSHArgs(namespace, vmName, username string, command string) []string {
-	args := []string{
-		"ssh",
-		fmt.Sprintf("vmi/%s", vmName),
-		"--namespace=" + namespace,
-		"--username=" + username,
-		"--local-ssh-opts=-o StrictHostKeyChecking=no",
-		"--local-ssh-opts=-o UserKnownHostsFile=/dev/null",
-		"--local-ssh-opts=-o LogLevel=ERROR",
-		"--local-ssh-opts=-i /home/appuser/.ssh/id_ed25519",
-	}
+	args := []string{}
 
-	// ADD KUBECONFIG AND CONTEXT IF AVAILABLE
+	// ADD KUBECONFIG AND CONTEXT FIRST (global flags must come before subcommand)
 	if kubeconfigPath := os.Getenv("KUBECONFIG"); kubeconfigPath != "" {
 		args = append(args, "--kubeconfig="+kubeconfigPath)
 		if c.kubernetesContext != "" {
 			args = append(args, "--context="+c.kubernetesContext)
 		}
 	}
+
+	// Then add the ssh subcommand and its arguments
+	args = append(args,
+		"ssh",
+		fmt.Sprintf("vmi/%s", vmName),
+		"--namespace="+namespace,
+		"--username="+username,
+		"--local-ssh-opts=-o StrictHostKeyChecking=no",
+		"--local-ssh-opts=-o UserKnownHostsFile=/dev/null",
+		"--local-ssh-opts=-o LogLevel=ERROR",
+		"--local-ssh-opts=-i /home/appuser/.ssh/id_ed25519",
+	)
 
 	if command != "" {
 		args = append(args, "--command="+command)
