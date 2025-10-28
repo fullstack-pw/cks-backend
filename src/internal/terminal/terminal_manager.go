@@ -659,6 +659,15 @@ func (tm *Manager) createPersistentSSHConnection(sessionID, namespace, target, c
 	// Create the command
 	cmd := exec.Command("virtctl", args...)
 
+	// IMPORTANT: Unset KUBECONFIG env var because virtctl ignores --kubeconfig flag when KUBECONFIG is set
+	var envWithoutKubeconfig []string
+	for _, env := range os.Environ() {
+		if !strings.HasPrefix(env, "KUBECONFIG=") {
+			envWithoutKubeconfig = append(envWithoutKubeconfig, env)
+		}
+	}
+	cmd.Env = envWithoutKubeconfig
+
 	// Rest of the function remains the same...
 	// Create a pty for the command
 	ptmx, err := pty.Start(cmd)
@@ -905,6 +914,15 @@ func (tm *Manager) testSSHConnection(ctx context.Context, namespace, vmName stri
 	defer cancel()
 
 	cmd := exec.CommandContext(testCtx, "virtctl", args...)
+
+	// IMPORTANT: Unset KUBECONFIG env var because virtctl ignores --kubeconfig flag when KUBECONFIG is set
+	var envWithoutKubeconfig []string
+	for _, env := range os.Environ() {
+		if !strings.HasPrefix(env, "KUBECONFIG=") {
+			envWithoutKubeconfig = append(envWithoutKubeconfig, env)
+		}
+	}
+	cmd.Env = envWithoutKubeconfig
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout

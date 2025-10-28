@@ -657,6 +657,16 @@ func (c *Client) getJoinCommand(ctx context.Context, namespace, controlPlaneName
 	args := c.buildVirtctlSSHArgs(namespace, actualVMName, "suporte", "cat /etc/kubeadm-join-command")
 	cmd := exec.Command("virtctl", args...)
 
+	// IMPORTANT: Unset KUBECONFIG env var because virtctl ignores --kubeconfig flag when KUBECONFIG is set
+	// Filter out KUBECONFIG from environment variables
+	var envWithoutKubeconfig []string
+	for _, env := range os.Environ() {
+		if !strings.HasPrefix(env, "KUBECONFIG=") {
+			envWithoutKubeconfig = append(envWithoutKubeconfig, env)
+		}
+	}
+	cmd.Env = envWithoutKubeconfig
+
 	c.logger.WithField("command", cmd.String()).Debug("Executing virtctl command")
 
 	var stdout, stderr bytes.Buffer
@@ -776,11 +786,21 @@ func (c *Client) executeCommandDirect(ctx context.Context, namespace, vmName, co
 	args := c.buildVirtctlSSHArgs(namespace, vmName, "suporte", command)
 
 	cmd := exec.CommandContext(ctx, "virtctl", args...)
+
+	// IMPORTANT: Unset KUBECONFIG env var because virtctl ignores --kubeconfig flag when KUBECONFIG is set
+	var envWithoutKubeconfig []string
+	for _, env := range os.Environ() {
+		if !strings.HasPrefix(env, "KUBECONFIG=") {
+			envWithoutKubeconfig = append(envWithoutKubeconfig, env)
+		}
+	}
+	cmd.Env = envWithoutKubeconfig
+
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	if err := cmd.Run(); err != nil {
+	if err := cmd.Run(); err != nil{
 		stderrStr := stderr.String()
 		return "", fmt.Errorf("SSH command execution failed on VM %s: %w, stderr: %s", vmName, err, stderrStr)
 	}
@@ -1234,6 +1254,15 @@ func (c *Client) IsVMSSHReady(ctx context.Context, namespace, vmName string) (bo
 
 	args := c.buildVirtctlSSHArgs(namespace, vmName, "suporte", "echo 'ssh-ready-test'")
 	cmd := exec.CommandContext(testCtx, "virtctl", args...)
+
+	// IMPORTANT: Unset KUBECONFIG env var because virtctl ignores --kubeconfig flag when KUBECONFIG is set
+	var envWithoutKubeconfig []string
+	for _, env := range os.Environ() {
+		if !strings.HasPrefix(env, "KUBECONFIG=") {
+			envWithoutKubeconfig = append(envWithoutKubeconfig, env)
+		}
+	}
+	cmd.Env = envWithoutKubeconfig
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
