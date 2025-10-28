@@ -37,7 +37,7 @@ type Client struct {
 	restConfig        *rest.Config
 	templateCache     map[string]*template.Template
 	logger            *logrus.Logger
-	kubernetesContext string // ADD THIS FIELD
+	kubernetesContext string
 }
 
 // Retry configuration constants
@@ -589,14 +589,9 @@ func (c *Client) getJoinCommand(ctx context.Context, namespace, controlPlaneName
 	// Simple direct attempt without polling first
 	c.logger.Info("Attempting direct join command retrieval...")
 
-	cmd := exec.Command(
-		"virtctl", "ssh",
-		fmt.Sprintf("vmi/%s", actualVMName),
-		"-n", namespace,
-		"-l", "suporte",
-		"--local-ssh-opts", "-o StrictHostKeyChecking=no",
-		"--command=cat /etc/kubeadm-join-command",
-	)
+	// Use buildVirtctlSSHArgs to ensure kubeconfig and context are included
+	args := c.buildVirtctlSSHArgs(namespace, actualVMName, "suporte", "cat /etc/kubeadm-join-command")
+	cmd := exec.Command("virtctl", args...)
 
 	c.logger.WithField("command", cmd.String()).Debug("Executing virtctl command")
 
