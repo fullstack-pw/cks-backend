@@ -40,15 +40,17 @@ type PersistentSSHConnection struct {
 }
 
 type Manager struct {
-	sessions          map[string]*Session
-	persistentSSH     map[string]*PersistentSSHConnection // Key: sessionID-target
-	lock              sync.RWMutex
-	persistentSSHLock sync.RWMutex
-	kubeClient        kubernetes.Interface
-	kubevirtClient    *kubevirt.Client
-	config            *rest.Config
-	sessionExpiry     time.Duration
-	logger            *logrus.Logger
+	sessions           map[string]*Session
+	persistentSSH      map[string]*PersistentSSHConnection // Key: sessionID-target
+	lock               sync.RWMutex
+	persistentSSHLock  sync.RWMutex
+	kubeClient         kubernetes.Interface
+	kubevirtClient     *kubevirt.Client
+	config             *rest.Config
+	sessionExpiry      time.Duration
+	logger             *logrus.Logger
+	kubernetesContext  string // Kubernetes context for virtctl commands
+	tempKubeconfigPath string // Cached path to temporary kubeconfig with correct context
 }
 
 type Session struct {
@@ -64,13 +66,14 @@ type Session struct {
 
 func NewManager(kubeClient kubernetes.Interface, kubevirtClient *kubevirt.Client, config *rest.Config, logger *logrus.Logger) *Manager {
 	tm := &Manager{
-		sessions:       make(map[string]*Session),
-		persistentSSH:  make(map[string]*PersistentSSHConnection),
-		kubeClient:     kubeClient,
-		kubevirtClient: kubevirtClient,
-		config:         config,
-		sessionExpiry:  30 * time.Minute,
-		logger:         logger,
+		sessions:          make(map[string]*Session),
+		persistentSSH:     make(map[string]*PersistentSSHConnection),
+		kubeClient:        kubeClient,
+		kubevirtClient:    kubevirtClient,
+		config:            config,
+		sessionExpiry:     30 * time.Minute,
+		logger:            logger,
+		kubernetesContext: os.Getenv("KUBERNETES_CONTEXT"), // Get context from environment
 	}
 
 	// Start cleanup goroutine
@@ -514,15 +517,75 @@ func (tm *Manager) GetOrCreatePersistentSSH(sessionID, namespace, target string)
 	return conn, nil
 }
 
+// getOrCreateTempKubeconfig creates a temporary kubeconfig file with the specified context set as current-context
+// This is necessary because virtctl ssh does NOT respect the --context flag and always uses current-context
+// The temp file is cached and reused for subsequent calls
+func (tm *Manager) getOrCreateTempKubeconfig() (string, error) {
+	// Return cached path if already created
+	if tm.tempKubeconfigPath != "" {
+		return tm.tempKubeconfigPath, nil
+	}
+
+	originalPath := os.Getenv("KUBECONFIG")
+	if originalPath == "" || tm.kubernetesContext == "" {
+		return originalPath, nil // No need for temp file if no context switching needed
+	}
+
+	// Read the original kubeconfig
+	data, err := os.ReadFile(originalPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read kubeconfig: %w", err)
+	}
+
+	// Create a temporary file
+	tmpFile, err := os.CreateTemp("/tmp", "kubeconfig-terminal-*.yaml")
+	if err != nil {
+		return "", fmt.Errorf("failed to create temp kubeconfig: %w", err)
+	}
+	defer tmpFile.Close()
+
+	tmpPath := tmpFile.Name()
+
+	// Write the content
+	if err := os.WriteFile(tmpPath, data, 0600); err != nil {
+		os.Remove(tmpPath)
+		return "", fmt.Errorf("failed to write temp kubeconfig: %w", err)
+	}
+
+	// Use kubectl to set the current-context
+	cmd := exec.Command("kubectl", "config", "use-context", tm.kubernetesContext, "--kubeconfig="+tmpPath)
+	if err := cmd.Run(); err != nil {
+		os.Remove(tmpPath)
+		return "", fmt.Errorf("failed to set context in temp kubeconfig: %w", err)
+	}
+
+	tm.logger.WithFields(logrus.Fields{
+		"tempKubeconfig": tmpPath,
+		"context":        tm.kubernetesContext,
+	}).Debug("Created temporary kubeconfig with context set for terminal manager")
+
+	// Cache the path for future calls
+	tm.tempKubeconfigPath = tmpPath
+
+	return tmpPath, nil
+}
+
 // buildVirtctlSSHArgs builds standardized virtctl ssh arguments for terminal connections
+// Note: virtctl ssh does NOT respect --context flag, so we use a temp kubeconfig with correct current-context
 func (tm *Manager) buildVirtctlSSHArgs(namespace, vmName, username string) []string {
 	args := []string{}
 
-	// ADD KUBECONFIG AND CONTEXT FIRST (global flags must come before subcommand)
+	// Create temp kubeconfig with correct current-context (virtctl doesn't respect --context flag)
 	if kubeconfigPath := os.Getenv("KUBECONFIG"); kubeconfigPath != "" {
-		args = append(args, "--kubeconfig="+kubeconfigPath)
-		if kubernetesContext := os.Getenv("KUBERNETES_CONTEXT"); kubernetesContext != "" {
-			args = append(args, "--context="+kubernetesContext)
+		if tempPath, err := tm.getOrCreateTempKubeconfig(); err == nil && tempPath != "" {
+			args = append(args, "--kubeconfig="+tempPath)
+		} else {
+			// Fallback to original path if temp creation fails
+			tm.logger.WithError(err).Warn("Failed to create temp kubeconfig for terminal, using original")
+			args = append(args, "--kubeconfig="+kubeconfigPath)
+			if tm.kubernetesContext != "" {
+				args = append(args, "--context="+tm.kubernetesContext)
+			}
 		}
 	}
 

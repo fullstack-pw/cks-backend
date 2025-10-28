@@ -38,6 +38,7 @@ type Client struct {
 	templateCache     map[string]*template.Template
 	logger            *logrus.Logger
 	kubernetesContext string
+	tempKubeconfigPath string // Cached path to temporary kubeconfig with correct context
 }
 
 // Retry configuration constants
@@ -56,16 +57,75 @@ type RetryConfig struct {
 	Backoff    float64
 }
 
+// getOrCreateTempKubeconfig creates a temporary kubeconfig file with the specified context set as current-context
+// This is necessary because virtctl ssh does NOT respect the --context flag and always uses current-context
+// The temp file is cached and reused for subsequent calls
+func (c *Client) getOrCreateTempKubeconfig() (string, error) {
+	// Return cached path if already created
+	if c.tempKubeconfigPath != "" {
+		return c.tempKubeconfigPath, nil
+	}
+
+	originalPath := os.Getenv("KUBECONFIG")
+	if originalPath == "" || c.kubernetesContext == "" {
+		return originalPath, nil // No need for temp file if no context switching needed
+	}
+
+	// Read the original kubeconfig
+	data, err := os.ReadFile(originalPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read kubeconfig: %w", err)
+	}
+
+	// Create a temporary file
+	tmpFile, err := os.CreateTemp("/tmp", "kubeconfig-*.yaml")
+	if err != nil {
+		return "", fmt.Errorf("failed to create temp kubeconfig: %w", err)
+	}
+	defer tmpFile.Close()
+
+	tmpPath := tmpFile.Name()
+
+	// Write the content and modify current-context using kubectl
+	if err := os.WriteFile(tmpPath, data, 0600); err != nil {
+		os.Remove(tmpPath)
+		return "", fmt.Errorf("failed to write temp kubeconfig: %w", err)
+	}
+
+	// Use kubectl to set the current-context
+	cmd := exec.Command("kubectl", "config", "use-context", c.kubernetesContext, "--kubeconfig="+tmpPath)
+	if err := cmd.Run(); err != nil {
+		os.Remove(tmpPath)
+		return "", fmt.Errorf("failed to set context in temp kubeconfig: %w", err)
+	}
+
+	c.logger.WithFields(logrus.Fields{
+		"tempKubeconfig": tmpPath,
+		"context":        c.kubernetesContext,
+	}).Debug("Created temporary kubeconfig with context set")
+
+	// Cache the path for future calls
+	c.tempKubeconfigPath = tmpPath
+
+	return tmpPath, nil
+}
+
 // buildVirtctlSSHArgs builds standardized virtctl ssh arguments
-// Note: Global flags (--kubeconfig, --context) must come BEFORE the ssh subcommand
+// Note: virtctl ssh does NOT respect --context flag, so we use a temp kubeconfig with correct current-context
 func (c *Client) buildVirtctlSSHArgs(namespace, vmName, username string, command string) []string {
 	args := []string{}
 
-	// ADD KUBECONFIG AND CONTEXT FIRST (global flags must come before subcommand)
+	// Create temp kubeconfig with correct current-context (virtctl doesn't respect --context flag)
 	if kubeconfigPath := os.Getenv("KUBECONFIG"); kubeconfigPath != "" {
-		args = append(args, "--kubeconfig="+kubeconfigPath)
-		if c.kubernetesContext != "" {
-			args = append(args, "--context="+c.kubernetesContext)
+		if tempPath, err := c.getOrCreateTempKubeconfig(); err == nil && tempPath != "" {
+			args = append(args, "--kubeconfig="+tempPath)
+		} else {
+			// Fallback to original path if temp creation fails
+			c.logger.WithError(err).Warn("Failed to create temp kubeconfig, using original")
+			args = append(args, "--kubeconfig="+kubeconfigPath)
+			if c.kubernetesContext != "" {
+				args = append(args, "--context="+c.kubernetesContext)
+			}
 		}
 	}
 
