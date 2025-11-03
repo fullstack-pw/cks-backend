@@ -4,7 +4,8 @@ kind: Kustomization
 resources:
   - deployment.yaml
   - service.yaml
-  - ingress.yaml
+  - ingress.yaml          # Keep for backward compatibility
+  - virtualservice.yaml   # Istio VirtualService (replaces ingress)
   - configmap.yaml
 
 namespace: default

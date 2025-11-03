@@ -1,0 +1,25 @@
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: cks-backend
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  hosts:
+    - "dev.api.cks.fullstack.pw"   # Will be overridden in overlays
+  gateways:
+    - istio-system/default-gateway
+  http:
+    - match:
+        - uri:
+            prefix: /
+      route:
+        - destination:
+            host: cks-backend.default.svc.cluster.local
+            port:
+              number: 8080
+      timeout: 30s
+      retries:
+        attempts: 3
+        perTryTimeout: 10s
+        retryOn: "5xx,reset,connect-failure,refused-stream"
