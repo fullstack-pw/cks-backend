@@ -4,22 +4,8 @@ kind: Kustomization
 resources:
   - ../../base
 
-patches:
-  - patch: |-
-      - op: replace
-        path: /metadata/annotations/external-dns.alpha.kubernetes.io~1hostname
-        value: "dev.api.cks.fullstack.pw"
-      - op: replace
-        path: /spec/tls/0/hosts/0
-        value: "dev.api.cks.fullstack.pw"
-      - op: replace
-        path: /spec/rules/0/host
-        value: "dev.api.cks.fullstack.pw"
-    target:
-      kind: Ingress
-      name: cks-backend
 configMapGenerator:
   - name: cks-backend-config
     behavior: merge
-    envs: 
+    envs:
       - configmap

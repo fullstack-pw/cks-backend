@@ -7,19 +7,6 @@ resources:
 patches:
   - patch: |-
       - op: replace
-        path: /metadata/annotations/external-dns.alpha.kubernetes.io~1hostname
-        value: "stg.api.cks.fullstack.pw"
-      - op: replace
-        path: /spec/tls/0/hosts/0
-        value: "stg.api.cks.fullstack.pw"
-      - op: replace
-        path: /spec/rules/0/host
-        value: "stg.api.cks.fullstack.pw"
-    target:
-      kind: Ingress
-      name: cks-backend
-  - patch: |-
-      - op: replace
         path: /data/ENVIRONMENT
         value: "prod"
       - op: replace
@@ -31,5 +18,5 @@ patches:
 configMapGenerator:
   - name: cks-backend-config
     behavior: merge
-    envs: 
+    envs:
       - configmap
