@@ -6,7 +6,7 @@ resources:
 
 images:
   - name: registry.fullstack.pw/library/cks-backend
-    newTag: v1.0.0
+    newTag: b91c4f2172c83c3d64b792e91751d6f27bb0cbf4
 
 configMapGenerator:
   - name: cks-backend-config
