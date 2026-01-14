@@ -1,0 +1,73 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: promote-to-prod
+spec:
+  args:
+    - name: app-name
+  metrics:
+    - name: promote-to-prod
+      provider:
+        job:
+          spec:
+            backoffLimit: 2
+            template:
+              spec:
+                restartPolicy: Never
+                serviceAccountName: promotion-sa
+                containers:
+                  - name: git-promotion
+                    image: alpine/git:latest
+                    workingDir: /workspace
+                    command:
+                      - /bin/sh
+                      - -c
+                      - |
+                        set -e
+
+                        echo "Promoting {{args.app-name}} to production"
+
+                        # Configure git
+                        git config --global user.name "Argo Rollouts Auto-Promotion"
+                        git config --global user.email "noreply@fullstack.pw"
+
+                        # Clone cks-backend repository
+                        git clone https://github.com/fullstack-pw/cks-backend.git /workspace
+                        cd /workspace
+
+                        # Get the current dev version (the version that just passed tests)
+                        DEV_KUSTOMIZATION="kustomize/overlays/dev/kustomization.yaml"
+                        PROD_KUSTOMIZATION="kustomize/overlays/prod/kustomization.yaml"
+
+                        DEV_TAG=$(grep -A1 "name: registry.fullstack.pw/library/{{args.app-name}}" "$DEV_KUSTOMIZATION" | grep "newTag:" | awk '{print $2}')
+                        PROD_TAG=$(grep -A1 "name: registry.fullstack.pw/library/{{args.app-name}}" "$PROD_KUSTOMIZATION" | grep "newTag:" | awk '{print $2}')
+
+                        echo "Dev is at version: $DEV_TAG"
+                        echo "Prod is at version: $PROD_TAG"
+
+                        # Check if already at this version
+                        if [ "$PROD_TAG" = "$DEV_TAG" ]; then
+                          echo "Production is already at version $DEV_TAG, skipping promotion"
+                          exit 0
+                        fi
+
+                        echo "Promoting $PROD_TAG -> $DEV_TAG"
+
+                        # Update the image tag in prod kustomization
+                        sed -i "s/newTag: .*/newTag: $DEV_TAG/" "$PROD_KUSTOMIZATION"
+
+                        # Commit and push
+                        git add "$PROD_KUSTOMIZATION"
+                        git commit -m "chore({{args.app-name}}): auto-promote $DEV_TAG to prod [skip ci]"
+
+                        # Push using GitHub token
+                        git push https://${GITHUB_TOKEN}@github.com/fullstack-pw/cks-backend.git main
+
+                        echo "Successfully promoted {{args.app-name}} to production"
+                        exit 0
+                    env:
+                      - name: GITHUB_TOKEN
+                        valueFrom:
+                          secretKeyRef:
+                            name: cluster-secrets
+                            key: github_token

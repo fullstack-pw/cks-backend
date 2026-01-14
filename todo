@@ -1,1 +1,2 @@
-export ENVIRONMENT=development && export LOG_LEVEL=debug && export KUBECONFIG=/home/pedro/.kube/config && export KUBERNETES_SERVICE_PORT=6443 && export KUBERNETES_SERVICE_HOST=https://192.168.1.21 && go build -o /home/pedro/repos/cks-backend/app /home/pedro/repos/cks-backend/src/cmd/server && /home/pedro/repos/cks-backend/app
+#run locally:
+# export ENVIRONMENT=development && export LOG_LEVEL=debug && export KUBECONFIG=/home/pedro/.kube/config && export KUBERNETES_SERVICE_PORT=6443 && export KUBERNETES_SERVICE_HOST=https://192.168.1.21 && go build -o /home/pedro/repos/cks-backend/app /home/pedro/repos/cks-backend/src/cmd/server && /home/pedro/repos/cks-backend/app

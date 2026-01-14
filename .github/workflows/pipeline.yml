@@ -30,6 +30,38 @@ jobs:
       app-name: "cks-backend"
       app-dockerfile: "Dockerfile"
 
+  update-dev-kustomization:
+    needs: [docker-build-and-push]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: self-hosted
+    name: Deploy cks-backend to dev
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Update dev kustomization with new image tag
+        run: |
+          # Use full SHA to match the Docker tag from build-and-push.yml
+          VERSION="${{ github.sha }}"
+          KUSTOMIZATION_FILE="kustomize/overlays/dev/kustomization.yaml"
+
+          if [ ! -f "$KUSTOMIZATION_FILE" ]; then
+            echo "Warning: $KUSTOMIZATION_FILE not found, skipping"
+            exit 0
+          fi
+
+          echo "Updating cks-backend dev to version: $VERSION"
+          sed -i "s/newTag: .*/newTag: $VERSION/" "$KUSTOMIZATION_FILE"
+
+          git config user.name "GitHub Actions Bot"
+          git config user.email "actions@github.com"
+          git add "$KUSTOMIZATION_FILE"
+          git commit -m "chore(cks-backend): deploy $VERSION to dev [skip ci]" || echo "No changes to commit"
+          git push || echo "Nothing to push"
+
   # dev-deploy:
   #   needs: [docker-build-and-push]
   #   name: DEV deploy
