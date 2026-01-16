@@ -29,7 +29,7 @@ import (
 	"github.com/fullstack-pw/cks/backend/internal/validation"
 )
 
-// createKubernetesConfig creates Kubernetes config with explicit context selection
+// createKubernetesConfig  creates Kubernetes config with explicit context selection
 func createKubernetesConfig(cfg *config.Config, logger *logrus.Logger) (*rest.Config, error) {
 	var k8sConfig *rest.Config
 	var err error
