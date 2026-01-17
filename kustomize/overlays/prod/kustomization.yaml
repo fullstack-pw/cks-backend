@@ -11,6 +11,13 @@ images:
 patches:
   - patch: |-
       - op: replace
+        path: /spec/hosts/0
+        value: "api.cks.fullstack.pw"
+    target:
+      kind: VirtualService
+      name: cks-backend
+  - patch: |-
+      - op: replace
         path: /spec/replicas
         value: 2
     target:
