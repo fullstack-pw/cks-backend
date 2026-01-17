@@ -17,13 +17,6 @@ patches:
       kind: VirtualService
       name: cks-backend
   - patch: |-
-      - op: replace
-        path: /spec/replicas
-        value: 2
-    target:
-      kind: Rollout
-      name: cks-backend
-  - patch: |-
       - op: remove
         path: /spec/strategy/blueGreen/prePromotionAnalysis
     target:
