@@ -1,7 +1,7 @@
 apiVersion: argoproj.io/v1alpha1
 kind: AnalysisTemplate
 metadata:
-  name: promote-to-prod
+  name: promote-cks-backend-to-prod
 spec:
   args:
     - name: app-name

@@ -108,7 +108,7 @@ spec:
             value: "dev"
       postPromotionAnalysis:
         templates:
-          - templateName: promote-to-prod
+          - templateName: promote-cks-backend-to-prod
         args:
           - name: app-name
             value: cks-backend
