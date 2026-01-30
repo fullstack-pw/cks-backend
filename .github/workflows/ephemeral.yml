@@ -29,7 +29,7 @@ jobs:
         if: github.event.action == 'opened' || github.event.action == 'reopened'
         uses: peter-evans/repository-dispatch@v2
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.RUNNER }}
           repository: fullstack-pw/infra
           event-type: create_ephemeral_cluster
           client-payload: |
