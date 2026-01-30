@@ -32,10 +32,10 @@ jobs:
 
           if kubectl get cluster "$CLUSTER_NAME" -n "$CLUSTER_NAME" --context tools --kubeconfig /home/runner/.kube/config &>/dev/null; then
             echo "exists=true" >> $GITHUB_OUTPUT
-            echo "Cluster $CLUSTER_NAME already exists!"
+            echo "Cluster $CLUSTER_NAME already exists"
           else
             echo "exists=false" >> $GITHUB_OUTPUT
-            echo "Cluster $CLUSTER_NAME does not exist!"
+            echo "Cluster $CLUSTER_NAME does not exist"
           fi
 
       - name: Trigger ephemeral cluster creation
