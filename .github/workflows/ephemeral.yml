@@ -39,7 +39,7 @@ jobs:
           fi
 
       - name: Trigger ephemeral cluster creation
-        if: steps.check-cluster.outputs.exists == 'false' && (github.event.action == 'opened' || github.event.action == 'reopened')
+        if: steps.check-cluster.outputs.exists == 'false'
         uses: peter-evans/repository-dispatch@v2
         with:
           token: ${{ secrets.RUNNER }}
