@@ -69,22 +69,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Build Docker image
+      - name: Build and push Docker image
         run: |
           docker build -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:pr-${{ github.event.pull_request.number }} .
-
-      - name: Expose HARBOR_KEY to the Workflow
-        run: echo "HARBOR_KEY=${HARBOR_KEY}" >> $GITHUB_ENV
-
-      - name: Login to Harbor
-        uses: docker/login-action@v3
-        with:
-          registry: registry.fullstack.pw
-          username: admin
-          password: ${{ env.HARBOR_KEY }}
-
-      - name: Push to Harbor
-        run: |
+          echo "$HARBOR_PASSWORD" | docker login registry.fullstack.pw -u admin --password-stdin
           docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:pr-${{ github.event.pull_request.number }}
 
       - name: Deploy to ephemeral cluster
@@ -92,16 +80,13 @@ jobs:
           # Get kubeconfig from Vault
           vault kv get -field=value kv/ephemeral-clusters/${{ steps.cluster-info.outputs.cluster_name }}/kubeconfig > /tmp/kubeconfig
 
-          # Update image tag in kustomization
-          cd kustomize/overlays/ephemeral
-          kustomize edit set image registry.fullstack.pw/library/${{ github.event.repository.name }}:pr-${{ github.event.pull_request.number }}
-          cd ../../..
+          # Build and apply kustomize manifests with updated image tag
+          kubectl kustomize kustomize/overlays/ephemeral \
+            | sed "s|registry.fullstack.pw/library/${{ github.event.repository.name }}:.*|registry.fullstack.pw/library/${{ github.event.repository.name }}:pr-${{ github.event.pull_request.number }}|" \
+            | kubectl apply -f - --kubeconfig /tmp/kubeconfig
 
-          # Deploy using kubectl
-          kubectl apply -k kustomize/overlays/ephemeral --kubeconfig /tmp/kubeconfig
-
-          # Wait for rollout (using Argo Rollouts)
-          kubectl argo rollouts status ${{ github.event.repository.name }} \
+          # Wait for rollout
+          kubectl rollout status deployment/${{ github.event.repository.name }} \
             -n default --timeout=5m --kubeconfig /tmp/kubeconfig
 
       - name: Run tests
