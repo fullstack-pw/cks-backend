@@ -85,7 +85,6 @@ jobs:
 
       - name: Push to Harbor
         run: |
-          echo ${{ secrets.HARBOR_PASSWORD }} | docker login ${{ env.REGISTRY }} -u ${{ secrets.HARBOR_USERNAME }} --password-stdin
           docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:pr-${{ github.event.pull_request.number }}
 
       - name: Deploy to ephemeral cluster
