@@ -73,6 +73,16 @@ jobs:
         run: |
           docker build -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:pr-${{ github.event.pull_request.number }} .
 
+      - name: Expose HARBOR_KEY to the Workflow
+        run: echo "HARBOR_KEY=${HARBOR_KEY}" >> $GITHUB_ENV
+
+      - name: Login to Harbor
+        uses: docker/login-action@v3
+        with:
+          registry: registry.fullstack.pw
+          username: admin
+          password: ${{ env.HARBOR_KEY }}
+
       - name: Push to Harbor
         run: |
           echo ${{ secrets.HARBOR_PASSWORD }} | docker login ${{ env.REGISTRY }} -u ${{ secrets.HARBOR_USERNAME }} --password-stdin
