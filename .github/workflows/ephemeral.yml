@@ -72,7 +72,7 @@ jobs:
       - name: Build and push Docker image
         run: |
           docker build -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:pr-${{ github.event.pull_request.number }} .
-          echo "$HARBOR_PASSWORD" | docker login registry.fullstack.pw -u admin --password-stdin
+          echo "${HARBOR_KEY}" | docker login registry.fullstack.pw -u admin --password-stdin
           docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:pr-${{ github.event.pull_request.number }}
 
       - name: Deploy to ephemeral cluster
