@@ -1,0 +1,107 @@
+name: PR Ephemeral Environment
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+
+env:
+  REGISTRY: registry.fullstack.pw
+  IMAGE_NAME: ${{ github.repository }}
+  VAULT_ADDR: https://vault.fullstack.pw
+
+jobs:
+  create-environment:
+    if: github.event.action != 'closed'
+    runs-on: self-hosted
+    outputs:
+      cluster_name: ${{ steps.cluster-info.outputs.cluster_name }}
+      dns_name: ${{ steps.cluster-info.outputs.dns_name }}
+    steps:
+      - name: Set cluster info
+        id: cluster-info
+        run: |
+          CLUSTER_NAME="pr-${{ github.event.repository.name }}-${{ github.event.pull_request.number }}"
+          DNS_NAME="pr-${{ github.event.pull_request.number }}-${{ github.event.repository.name }}.ephemeral.fullstack.pw"
+          echo "cluster_name=$CLUSTER_NAME" >> $GITHUB_OUTPUT
+          echo "dns_name=$DNS_NAME" >> $GITHUB_OUTPUT
+
+      - name: Check if cluster exists
+        id: check-cluster
+        run: |
+          CLUSTER_NAME="${{ steps.cluster-info.outputs.cluster_name }}"
+
+          if kubectl get cluster "$CLUSTER_NAME" -n "$CLUSTER_NAME" --context tools --kubeconfig /home/runner/.kube/config &>/dev/null; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "Cluster $CLUSTER_NAME already exists"
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "Cluster $CLUSTER_NAME does not exist"
+          fi
+
+      - name: Trigger ephemeral cluster creation
+        if: steps.check-cluster.outputs.exists == 'false'
+        uses: peter-evans/repository-dispatch@v2
+        with:
+          token: ${{ secrets.RUNNER }}
+          repository: fullstack-pw/infra
+          event-type: create_ephemeral_cluster
+          client-payload: |
+            {
+              "pr_number": "${{ github.event.pull_request.number }}",
+              "repository": "${{ github.event.repository.name }}",
+              "branch": "${{ github.head_ref }}",
+              "install_postgres": "false"
+            }
+
+      - name: Wait for cluster ready
+        run: |
+          echo "Waiting for ephemeral cluster to be ready..."
+          CLUSTER_NAME="${{ steps.cluster-info.outputs.cluster_name }}"
+
+          # Wait up to 15 minutes for cluster provisioning
+          timeout 900 bash -c '
+            until kubectl get cluster '"$CLUSTER_NAME"' -n '"$CLUSTER_NAME"' --context tools --kubeconfig /home/runner/.kube/config -o jsonpath="{.status.conditions[?(@.type==\"Available\")].status}" | grep -q "True"; do
+              echo "Cluster not ready yet, waiting..."
+              sleep 30
+            done
+          ' || echo "Timeout waiting for cluster - will continue anyway"
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build and push Docker image
+        run: |
+          docker build -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:pr-${{ github.event.pull_request.number }} .
+          echo "${HARBOR_KEY}" | docker login registry.fullstack.pw -u admin --password-stdin
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:pr-${{ github.event.pull_request.number }}
+
+      - name: Deploy to ephemeral cluster
+        run: |
+          # Get kubeconfig from Vault
+          vault kv get -field=value kv/ephemeral-clusters/${{ steps.cluster-info.outputs.cluster_name }}/kubeconfig > /tmp/kubeconfig
+
+          # Build and apply kustomize manifests with updated image tag
+          kubectl kustomize kustomize/overlays/ephemeral \
+            | sed "s|registry.fullstack.pw/library/${{ github.event.repository.name }}:.*|registry.fullstack.pw/library/${{ github.event.repository.name }}:pr-${{ github.event.pull_request.number }}|" \
+            | kubectl apply -f - --kubeconfig /tmp/kubeconfig
+
+          # Wait for rollout
+          kubectl rollout status deployment/${{ github.event.repository.name }} \
+            -n default --timeout=5m --kubeconfig /tmp/kubeconfig
+
+      - name: Run tests
+        run: |
+          # Run your test suite against the ephemeral environment
+          # Example: Cypress tests
+          npx cypress run --config baseUrl=https://${{ steps.cluster-info.outputs.dns_name }}
+
+      - name: Post test results
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const testStatus = '${{ job.status }}' === 'success' ? 'Passed' : '❌ Failed';
+            const dnsName = '${{ steps.cluster-info.outputs.dns_name }}';
+
+            const body = `## Test Results
