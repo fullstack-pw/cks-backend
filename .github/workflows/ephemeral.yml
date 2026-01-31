@@ -5,7 +5,7 @@ on:
     types: [opened, synchronize, reopened, closed]
 
 env:
-  REGISTRY: harbor.fullstack.pw
+  REGISTRY: registry.fullstack.pw
   IMAGE_NAME: ${{ github.repository }}
   VAULT_ADDR: https://vault.fullstack.pw
 
