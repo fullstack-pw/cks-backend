@@ -130,6 +130,7 @@ jobs:
           KUBECONFIG: /tmp/kubeconfig
         run: |
           cd infra
+          make ephemeral-init
           make ephemeral-apply WORKSPACE=${{ steps.cluster-info.outputs.cluster_name }}
 
       # ==================== BUILD AND DEPLOY (PR opened/updated) ====================
