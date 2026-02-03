@@ -219,45 +219,16 @@ jobs:
             fi
           fi
 
-      - name: Destroy ephemeral infrastructure with OpenTofu
-        if: github.event.action == 'closed'
+      - name: Destroy ephemeral infrastructure
+        if: |
+          github.event.action == 'closed' ||
+          (failure() && github.event.action != 'closed')
         env:
           KUBECONFIG: /tmp/kubeconfig
-        run: |
-          cd infra/ephemeral-clusters/opentofu
-          tofu workspace select ${{ steps.cluster-info.outputs.cluster_name }} || true
-          tofu destroy -auto-approve || true
-          tofu workspace select default || true
-          tofu workspace delete ${{ steps.cluster-info.outputs.cluster_name }} || true
-
-      - name: Delete cluster
-        if: github.event.action == 'closed'
-        run: |
-          CLUSTER_NAME="${{ steps.cluster-info.outputs.cluster_name }}"
-          kubectl delete cluster $CLUSTER_NAME -n $CLUSTER_NAME --context tools --ignore-not-found=true --kubeconfig /home/runner/.kube/config
-
-          # Wait for cluster deletion
-          kubectl wait --for=delete cluster/$CLUSTER_NAME -n $CLUSTER_NAME \
-            --timeout=5m --context tools --kubeconfig /home/runner/.kube/config || true
-
-          # Delete namespace
-          kubectl delete namespace $CLUSTER_NAME --context tools --ignore-not-found=true --kubeconfig /home/runner/.kube/config
-
-      - name: Release IPs
-        if: github.event.action == 'closed'
-        run: |
-          cd infra
-          ./clusters/scripts/ip_pool_manager.sh release ${{ steps.cluster-info.outputs.cluster_name }}
-
-      - name: Cleanup on failure
-        if: failure() && github.event.action != 'closed'
         run: |
           cd infra
           CLUSTER_NAME="${{ steps.cluster-info.outputs.cluster_name }}"
 
           make ephemeral-destroy WORKSPACE=${{ steps.cluster-info.outputs.cluster_name }} || true
-          # Delete cluster if it was created
-          # kubectl delete cluster $CLUSTER_NAME -n $CLUSTER_NAME --context tools --ignore-not-found=true --kubeconfig /home/runner/.kube/config
 
-          # Release IP
           ./clusters/scripts/ip_pool_manager.sh release "$CLUSTER_NAME" || true
