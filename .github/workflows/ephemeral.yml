@@ -255,10 +255,9 @@ jobs:
           cd infra
           CLUSTER_NAME="${{ steps.cluster-info.outputs.cluster_name }}"
 
-          # Delete cluster if it was created
-          kubectl delete cluster $CLUSTER_NAME -n $CLUSTER_NAME --context tools --ignore-not-found=true --kubeconfig /home/runner/.kube/config
-
           make ephemeral-destroy WORKSPACE=${{ steps.cluster-info.outputs.cluster_name }} || true
+          # Delete cluster if it was created
+          # kubectl delete cluster $CLUSTER_NAME -n $CLUSTER_NAME --context tools --ignore-not-found=true --kubeconfig /home/runner/.kube/config
 
           # Release IP
           ./clusters/scripts/ip_pool_manager.sh release "$CLUSTER_NAME" || true
