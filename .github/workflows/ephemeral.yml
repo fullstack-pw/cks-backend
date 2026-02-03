@@ -137,8 +137,6 @@ jobs:
 
       - name: Build and push Docker image
         if: github.event.action != 'closed'
-        env:
-          HARBOR_KEY: ${{ secrets.HARBOR_KEY }}
         run: |
           docker build -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:pr-${{ github.event.pull_request.number }} .
           echo "${HARBOR_KEY}" | docker login ${{ env.REGISTRY }} -u admin --password-stdin
