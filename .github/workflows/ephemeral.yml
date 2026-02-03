@@ -118,8 +118,6 @@ jobs:
 
       - name: Add to PR_KUBECONFIG in Vault
         if: github.event.action != 'closed' && steps.check-cluster.outputs.exists == 'false'
-        env:
-          VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
         run: |
           cd infra
           ./clusters/scripts/pr_kubeconfig_manager.sh add \
