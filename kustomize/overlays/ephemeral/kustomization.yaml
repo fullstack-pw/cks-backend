@@ -4,7 +4,9 @@ kind: Kustomization
 namespace: default
 
 resources:
-  - ../../base
+  - service.yaml
+  - configmap.yaml
+  - deployment.yaml
 
 images:
   - name: registry.fullstack.pw/library/cks-backend
