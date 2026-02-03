@@ -124,28 +124,13 @@ jobs:
             ${{ steps.cluster-info.outputs.cluster_name }} \
             /tmp/kubeconfig
 
-      - name: Trigger infrastructure provisioning
+      - name: Apply ephemeral infrastructure with OpenTofu
         if: github.event.action != 'closed' && steps.check-cluster.outputs.exists == 'false'
-        uses: peter-evans/repository-dispatch@v2
-        with:
-          token: ${{ secrets.RUNNER }}
-          repository: fullstack-pw/infra
-          event-type: provision_ephemeral_infrastructure
-          client-payload: |
-            {
-              "cluster_name": "${{ steps.cluster-info.outputs.cluster_name }}"
-            }
-
-      - name: Wait for infrastructure ready
-        if: github.event.action != 'closed' && steps.check-cluster.outputs.exists == 'false'
+        env:
+          KUBECONFIG: /tmp/kubeconfig
         run: |
-          echo "Waiting for DNS resolution..."
-          timeout 900 bash -c '
-            until dig +short ${{ steps.cluster-info.outputs.dns_name }} | grep -q "192.168.1"; do
-              echo "Waiting for DNS resolution..."
-              sleep 30
-            done
-          '
+          cd infra
+          make ephemeral-apply WORKSPACE=${{ steps.cluster-info.outputs.cluster_name }}
 
       # ==================== BUILD AND DEPLOY (PR opened/updated) ====================
       # - name: Checkout app code
@@ -219,23 +204,23 @@ jobs:
       #       });
 
       # ==================== CLEANUP (PR closed) ====================
-      - name: Trigger infrastructure destruction
+      - name: Get kubeconfig for destruction
         if: github.event.action == 'closed'
-        uses: peter-evans/repository-dispatch@v2
-        with:
-          token: ${{ secrets.RUNNER }}
-          repository: fullstack-pw/infra
-          event-type: destroy_ephemeral_infrastructure
-          client-payload: |
-            {
-              "cluster_name": "${{ steps.cluster-info.outputs.cluster_name }}"
-            }
-
-      - name: Wait for infrastructure destruction
-        if: github.event.action == 'closed'
+        env:
+          VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
         run: |
-          echo "Waiting for infrastructure destruction..."
-          sleep 60
+          vault kv get -field=PR_KUBECONFIG kv/cluster-secret-store/secrets > /tmp/pr-kubeconfig || true
+
+      - name: Destroy ephemeral infrastructure with OpenTofu
+        if: github.event.action == 'closed'
+        env:
+          KUBECONFIG: /tmp/pr-kubeconfig
+        run: |
+          cd infra/ephemeral-clusters/opentofu
+          tofu workspace select ${{ steps.cluster-info.outputs.cluster_name }} || true
+          tofu destroy -auto-approve || true
+          tofu workspace select default || true
+          tofu workspace delete ${{ steps.cluster-info.outputs.cluster_name }} || true
 
       - name: Remove from PR_KUBECONFIG in Vault
         if: github.event.action == 'closed'
