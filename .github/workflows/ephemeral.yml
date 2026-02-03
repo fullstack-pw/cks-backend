@@ -116,13 +116,10 @@ jobs:
             -n $CLUSTER_NAME \
             -o jsonpath='{.data.value}' --context tools --kubeconfig /home/runner/.kube/config | base64 -d > /tmp/kubeconfig
 
-      - name: Add to PR_KUBECONFIG in Vault
-        if: github.event.action != 'closed' && steps.check-cluster.outputs.exists == 'false'
-        run: |
-          cd infra
-          ./clusters/scripts/pr_kubeconfig_manager.sh add \
-            ${{ steps.cluster-info.outputs.cluster_name }} \
-            /tmp/kubeconfig
+          # Rename context to match workspace name for OpenTofu
+          ORIGINAL_CONTEXT=$(kubectl --kubeconfig /tmp/kubeconfig config current-context)
+          kubectl --kubeconfig /tmp/kubeconfig config rename-context "$ORIGINAL_CONTEXT" "$CLUSTER_NAME"
+          kubectl --kubeconfig /tmp/kubeconfig config use-context "$CLUSTER_NAME"
 
       - name: Apply ephemeral infrastructure with OpenTofu
         if: github.event.action != 'closed' && steps.check-cluster.outputs.exists == 'false'
@@ -207,30 +204,31 @@ jobs:
       # ==================== CLEANUP (PR closed) ====================
       - name: Get kubeconfig for destruction
         if: github.event.action == 'closed'
-        env:
-          VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
         run: |
-          vault kv get -field=PR_KUBECONFIG kv/cluster-secret-store/secrets > /tmp/pr-kubeconfig || true
+          CLUSTER_NAME="${{ steps.cluster-info.outputs.cluster_name }}"
+          kubectl get secret ${CLUSTER_NAME}-kubeconfig \
+            -n $CLUSTER_NAME \
+            -o jsonpath='{.data.value}' --context tools --kubeconfig /home/runner/.kube/config | base64 -d > /tmp/kubeconfig || true
+
+          # Rename context to match workspace name for OpenTofu
+          if [ -f /tmp/kubeconfig ]; then
+            ORIGINAL_CONTEXT=$(kubectl --kubeconfig /tmp/kubeconfig config current-context 2>/dev/null || echo "")
+            if [ -n "$ORIGINAL_CONTEXT" ]; then
+              kubectl --kubeconfig /tmp/kubeconfig config rename-context "$ORIGINAL_CONTEXT" "$CLUSTER_NAME" 2>/dev/null || true
+              kubectl --kubeconfig /tmp/kubeconfig config use-context "$CLUSTER_NAME" 2>/dev/null || true
+            fi
+          fi
 
       - name: Destroy ephemeral infrastructure with OpenTofu
         if: github.event.action == 'closed'
         env:
-          KUBECONFIG: /tmp/pr-kubeconfig
+          KUBECONFIG: /tmp/kubeconfig
         run: |
           cd infra/ephemeral-clusters/opentofu
           tofu workspace select ${{ steps.cluster-info.outputs.cluster_name }} || true
           tofu destroy -auto-approve || true
           tofu workspace select default || true
           tofu workspace delete ${{ steps.cluster-info.outputs.cluster_name }} || true
-
-      - name: Remove from PR_KUBECONFIG in Vault
-        if: github.event.action == 'closed'
-        env:
-          VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
-        run: |
-          cd infra
-          ./clusters/scripts/pr_kubeconfig_manager.sh remove \
-            ${{ steps.cluster-info.outputs.cluster_name }}
 
       - name: Delete cluster
         if: github.event.action == 'closed'
