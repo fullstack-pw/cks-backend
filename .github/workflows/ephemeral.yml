@@ -10,12 +10,8 @@ env:
   VAULT_ADDR: https://vault.fullstack.pw
 
 jobs:
-  create-environment:
-    if: github.event.action != 'closed'
+  manage-environment:
     runs-on: self-hosted
-    outputs:
-      cluster_name: ${{ steps.cluster-info.outputs.cluster_name }}
-      dns_name: ${{ steps.cluster-info.outputs.dns_name }}
     steps:
       - name: Set cluster info
         id: cluster-info
@@ -25,11 +21,17 @@ jobs:
           echo "cluster_name=$CLUSTER_NAME" >> $GITHUB_OUTPUT
           echo "dns_name=$DNS_NAME" >> $GITHUB_OUTPUT
 
+      - name: Checkout infra repo
+        uses: actions/checkout@v4
+        with:
+          repository: fullstack-pw/infra
+          token: ${{ secrets.RUNNER }}
+          path: infra
+
       - name: Check if cluster exists
         id: check-cluster
         run: |
           CLUSTER_NAME="${{ steps.cluster-info.outputs.cluster_name }}"
-
           if kubectl get cluster "$CLUSTER_NAME" -n "$CLUSTER_NAME" --context tools --kubeconfig /home/runner/.kube/config &>/dev/null; then
             echo "exists=true" >> $GITHUB_OUTPUT
             echo "Cluster $CLUSTER_NAME already exists"
@@ -38,70 +40,244 @@ jobs:
             echo "Cluster $CLUSTER_NAME does not exist"
           fi
 
-      - name: Trigger ephemeral cluster creation
-        if: steps.check-cluster.outputs.exists == 'false'
+      # ==================== CREATE/UPDATE ENVIRONMENT ====================
+      - name: Check IP pool capacity
+        if: github.event.action != 'closed' && steps.check-cluster.outputs.exists == 'false'
+        run: |
+          cd infra
+          AVAILABLE=$(./clusters/scripts/ip_pool_manager.sh check-capacity)
+          CAPACITY_RESULT=$?
+          echo "Capacity available: $AVAILABLE slots free"
+          if [ "$CAPACITY_RESULT" -ne 0 ]; then
+            echo "::error::IP pool exhausted. All 5 ephemeral cluster slots are in use (10 IPs / 2 per cluster). Please close old PRs."
+            exit 1
+          fi
+
+      - name: Allocate IP from pool
+        if: github.event.action != 'closed' && steps.check-cluster.outputs.exists == 'false'
+        id: allocate
+        run: |
+          cd infra
+          CLUSTER_NAME="${{ steps.cluster-info.outputs.cluster_name }}"
+          CLUSTER_IP=$(./clusters/scripts/ip_pool_manager.sh allocate "$CLUSTER_NAME")
+
+          # Calculate node IP (VIP + 1) - each cluster needs 2 IPs
+          IP_LAST_OCTET=$(echo "$CLUSTER_IP" | cut -d'.' -f4)
+          NODE_IP_LAST_OCTET=$((IP_LAST_OCTET + 1))
+          NODE_IP="192.168.1.${NODE_IP_LAST_OCTET}"
+
+          echo "ip=$CLUSTER_IP" >> $GITHUB_OUTPUT
+          echo "node_ip=$NODE_IP" >> $GITHUB_OUTPUT
+          echo "Allocated control plane VIP: $CLUSTER_IP"
+          echo "Node IP: $NODE_IP"
+
+      - name: Render Cluster API manifest
+        if: github.event.action != 'closed' && steps.check-cluster.outputs.exists == 'false'
+        run: |
+          cd infra
+          export CLUSTER_NAME="${{ steps.cluster-info.outputs.cluster_name }}"
+          export CLUSTER_IP="${{ steps.allocate.outputs.ip }}"
+          export NODE_IP="${{ steps.allocate.outputs.node_ip }}"
+          export PR_NUMBER="${{ github.event.pull_request.number }}"
+          export REPOSITORY="${{ github.event.repository.name }}"
+          envsubst < ephemeral-clusters/cluster-api/k3s-cluster.yaml.tpl > /tmp/cluster.yaml
+          cat /tmp/cluster.yaml
+
+      - name: Create cluster via Cluster API
+        if: github.event.action != 'closed' && steps.check-cluster.outputs.exists == 'false'
+        run: |
+          kubectl apply -f /tmp/cluster.yaml --context tools --kubeconfig /home/runner/.kube/config
+
+      - name: Copy Proxmox credentials to namespace
+        if: github.event.action != 'closed' && steps.check-cluster.outputs.exists == 'false'
+        run: |
+          CLUSTER_NAME="${{ steps.cluster-info.outputs.cluster_name }}"
+          kubectl --context tools --kubeconfig /home/runner/.kube/config \
+            get secret proxmox-credentials -n k3s-test -o json | \
+            jq 'del(.metadata.namespace,.metadata.uid,.metadata.resourceVersion,.metadata.creationTimestamp,.metadata.ownerReferences,.metadata.finalizers)' | \
+            kubectl --context tools --kubeconfig /home/runner/.kube/config apply -n "$CLUSTER_NAME" -f - || \
+            echo "Warning: Could not copy proxmox-credentials (may already exist)"
+
+      - name: Wait for cluster available
+        if: github.event.action != 'closed' && steps.check-cluster.outputs.exists == 'false'
+        run: |
+          CLUSTER_NAME="${{ steps.cluster-info.outputs.cluster_name }}"
+          echo "Waiting for cluster $CLUSTER_NAME to be available..."
+          kubectl wait --for=condition=Available \
+            cluster/$CLUSTER_NAME \
+            -n $CLUSTER_NAME \
+            --timeout=5m --context tools --kubeconfig /home/runner/.kube/config
+
+      - name: Extract kubeconfig
+        if: github.event.action != 'closed' && steps.check-cluster.outputs.exists == 'false'
+        run: |
+          CLUSTER_NAME="${{ steps.cluster-info.outputs.cluster_name }}"
+          kubectl get secret ${CLUSTER_NAME}-kubeconfig \
+            -n $CLUSTER_NAME \
+            -o jsonpath='{.data.value}' --context tools --kubeconfig /home/runner/.kube/config | base64 -d > /tmp/kubeconfig
+
+      - name: Add to PR_KUBECONFIG in Vault
+        if: github.event.action != 'closed' && steps.check-cluster.outputs.exists == 'false'
+        env:
+          VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
+        run: |
+          cd infra
+          ./clusters/scripts/pr_kubeconfig_manager.sh add \
+            ${{ steps.cluster-info.outputs.cluster_name }} \
+            /tmp/kubeconfig
+
+      - name: Trigger infrastructure provisioning
+        if: github.event.action != 'closed' && steps.check-cluster.outputs.exists == 'false'
         uses: peter-evans/repository-dispatch@v2
         with:
           token: ${{ secrets.RUNNER }}
           repository: fullstack-pw/infra
-          event-type: create_ephemeral_cluster
+          event-type: provision_ephemeral_infrastructure
           client-payload: |
             {
-              "pr_number": "${{ github.event.pull_request.number }}",
-              "repository": "${{ github.event.repository.name }}",
-              "branch": "${{ github.head_ref }}",
-              "install_postgres": "false"
+              "cluster_name": "${{ steps.cluster-info.outputs.cluster_name }}"
             }
 
-      - name: Wait for cluster ready
+      - name: Wait for infrastructure ready
+        if: github.event.action != 'closed' && steps.check-cluster.outputs.exists == 'false'
         run: |
-          echo "Waiting for ephemeral cluster to be ready..."
-          CLUSTER_NAME="${{ steps.cluster-info.outputs.cluster_name }}"
-
-          # Wait up to 15 minutes for cluster provisioning
+          echo "Waiting for DNS resolution..."
           timeout 900 bash -c '
-            until kubectl get cluster '"$CLUSTER_NAME"' -n '"$CLUSTER_NAME"' --context tools --kubeconfig /home/runner/.kube/config -o jsonpath="{.status.conditions[?(@.type==\"Available\")].status}" | grep -q "True"; do
-              echo "Cluster not ready yet, waiting..."
+            until dig +short ${{ steps.cluster-info.outputs.dns_name }} | grep -q "192.168.1"; do
+              echo "Waiting for DNS resolution..."
               sleep 30
             done
-          ' || echo "Timeout waiting for cluster - will continue anyway"
+          '
 
-      - name: Checkout code
-        uses: actions/checkout@v4
+      # ==================== BUILD AND DEPLOY (PR opened/updated) ====================
+      # - name: Checkout app code
+      #   if: github.event.action != 'closed'
+      #   uses: actions/checkout@v4
 
-      - name: Build and push Docker image
-        run: |
-          docker build -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:pr-${{ github.event.pull_request.number }} .
-          echo "${HARBOR_KEY}" | docker login registry.fullstack.pw -u admin --password-stdin
-          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:pr-${{ github.event.pull_request.number }}
+      # - name: Build and push Docker image
+      #   if: github.event.action != 'closed'
+      #   env:
+      #     HARBOR_KEY: ${{ secrets.HARBOR_KEY }}
+      #   run: |
+      #     docker build -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:pr-${{ github.event.pull_request.number }} .
+      #     echo "${HARBOR_KEY}" | docker login registry.fullstack.pw -u admin --password-stdin
+      #     docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:pr-${{ github.event.pull_request.number }}
 
-      - name: Deploy to ephemeral cluster
-        run: |
-          # Get kubeconfig from Vault
-          vault kv get -field=value kv/ephemeral-clusters/${{ steps.cluster-info.outputs.cluster_name }}/kubeconfig > /tmp/kubeconfig
+      # - name: Get kubeconfig from Vault
+      #   if: github.event.action != 'closed'
+      #   env:
+      #     VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
+      #   run: |
+      #     vault kv get -field=PR_KUBECONFIG kv/cluster-secret-store/secrets > /tmp/pr-kubeconfig
+      #     # Extract just this cluster's context
+      #     export KUBECONFIG=/tmp/pr-kubeconfig
+      #     kubectl config use-context ${{ steps.cluster-info.outputs.cluster_name }}
 
-          # Build and apply kustomize manifests with updated image tag
-          kubectl kustomize kustomize/overlays/ephemeral \
-            | sed "s|registry.fullstack.pw/library/${{ github.event.repository.name }}:.*|registry.fullstack.pw/library/${{ github.event.repository.name }}:pr-${{ github.event.pull_request.number }}|" \
-            | kubectl apply -f - --kubeconfig /tmp/kubeconfig
+      # - name: Deploy to ephemeral cluster
+      #   if: github.event.action != 'closed'
+      #   run: |
+      #     # Update image tag in kustomization
+      #     cd kustomize/overlays/ephemeral
+      #     kustomize edit set image registry.fullstack.pw/library/${{ github.event.repository.name }}=registry.fullstack.pw/library/${{ github.event.repository.name }}:pr-${{ github.event.pull_request.number }}
+      #     cd ../../..
 
-          # Wait for rollout
-          kubectl rollout status deployment/${{ github.event.repository.name }} \
-            -n default --timeout=5m --kubeconfig /tmp/kubeconfig
+      #     # Apply kustomization
+      #     kubectl apply -k kustomize/overlays/ephemeral --kubeconfig /tmp/pr-kubeconfig
 
-      - name: Run tests
-        run: |
-          # Run your test suite against the ephemeral environment
-          # Example: Cypress tests
-          npx cypress run --config baseUrl=https://${{ steps.cluster-info.outputs.dns_name }}
+      #     # Wait for deployment rollout
+      #     kubectl rollout status deployment/${{ github.event.repository.name }} \
+      #       -n default --timeout=5m --kubeconfig /tmp/pr-kubeconfig
 
-      - name: Post test results
-        if: always()
-        uses: actions/github-script@v7
+      # - name: Run tests
+      #   if: github.event.action != 'closed'
+      #   run: |
+      #     echo "Tests would run here against https://${{ steps.cluster-info.outputs.dns_name }}"
+      #     # npx cypress run --config baseUrl=https://${{ steps.cluster-info.outputs.dns_name }}
+
+      # - name: Post deployment info
+      #   if: github.event.action != 'closed' && steps.check-cluster.outputs.exists == 'false'
+      #   uses: actions/github-script@v7
+      #   with:
+      #     github-token: ${{ secrets.GITHUB_TOKEN }}
+      #     script: |
+      #       const dnsName = '${{ steps.cluster-info.outputs.dns_name }}';
+      #       const clusterName = '${{ steps.cluster-info.outputs.cluster_name }}';
+
+      #       const body = `## Ephemeral Environment Ready
+
+      #       Your ephemeral environment has been deployed!
+
+      #       **URL**: https://${dnsName}
+      #       **Cluster**: \`${clusterName}\`
+
+      #       The environment will be automatically destroyed when this PR is closed.
+      #       `;
+
+      #       github.rest.issues.createComment({
+      #         owner: context.repo.owner,
+      #         repo: context.repo.repo,
+      #         issue_number: context.issue.number,
+      #         body: body
+      #       });
+
+      # ==================== CLEANUP (PR closed) ====================
+      - name: Trigger infrastructure destruction
+        if: github.event.action == 'closed'
+        uses: peter-evans/repository-dispatch@v2
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const testStatus = '${{ job.status }}' === 'success' ? 'Passed' : '❌ Failed';
-            const dnsName = '${{ steps.cluster-info.outputs.dns_name }}';
+          token: ${{ secrets.RUNNER }}
+          repository: fullstack-pw/infra
+          event-type: destroy_ephemeral_infrastructure
+          client-payload: |
+            {
+              "cluster_name": "${{ steps.cluster-info.outputs.cluster_name }}"
+            }
 
-            const body = `## Test Results
+      - name: Wait for infrastructure destruction
+        if: github.event.action == 'closed'
+        run: |
+          echo "Waiting for infrastructure destruction..."
+          sleep 60
+
+      - name: Remove from PR_KUBECONFIG in Vault
+        if: github.event.action == 'closed'
+        env:
+          VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
+        run: |
+          cd infra
+          ./clusters/scripts/pr_kubeconfig_manager.sh remove \
+            ${{ steps.cluster-info.outputs.cluster_name }}
+
+      - name: Delete cluster
+        if: github.event.action == 'closed'
+        run: |
+          CLUSTER_NAME="${{ steps.cluster-info.outputs.cluster_name }}"
+          kubectl delete cluster $CLUSTER_NAME -n $CLUSTER_NAME --context tools --ignore-not-found=true --kubeconfig /home/runner/.kube/config
+
+          # Wait for cluster deletion
+          kubectl wait --for=delete cluster/$CLUSTER_NAME -n $CLUSTER_NAME \
+            --timeout=5m --context tools --kubeconfig /home/runner/.kube/config || true
+
+          # Delete namespace
+          kubectl delete namespace $CLUSTER_NAME --context tools --ignore-not-found=true --kubeconfig /home/runner/.kube/config
+
+      - name: Release IPs
+        if: github.event.action == 'closed'
+        run: |
+          cd infra
+          ./clusters/scripts/ip_pool_manager.sh release ${{ steps.cluster-info.outputs.cluster_name }}
+
+      - name: Cleanup on failure
+        if: failure() && github.event.action != 'closed'
+        run: |
+          cd infra
+          CLUSTER_NAME="${{ steps.cluster-info.outputs.cluster_name }}"
+
+          # Delete cluster if it was created
+          kubectl delete cluster $CLUSTER_NAME -n $CLUSTER_NAME --context tools --ignore-not-found=true --kubeconfig /home/runner/.kube/config
+
+          # Remove from PR_KUBECONFIG
+          ./clusters/scripts/pr_kubeconfig_manager.sh remove "$CLUSTER_NAME" || true
+
+          # Release IP
+          ./clusters/scripts/ip_pool_manager.sh release "$CLUSTER_NAME" || true
