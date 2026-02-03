@@ -258,8 +258,7 @@ jobs:
           # Delete cluster if it was created
           kubectl delete cluster $CLUSTER_NAME -n $CLUSTER_NAME --context tools --ignore-not-found=true --kubeconfig /home/runner/.kube/config
 
-          # Remove from PR_KUBECONFIG
-          ./clusters/scripts/pr_kubeconfig_manager.sh remove "$CLUSTER_NAME" || true
+          make ephemeral-destroy WORKSPACE=${{ steps.cluster-info.outputs.cluster_name }} || true
 
           # Release IP
           ./clusters/scripts/ip_pool_manager.sh release "$CLUSTER_NAME" || true
