@@ -131,75 +131,68 @@ jobs:
           make ephemeral-apply WORKSPACE=${{ steps.cluster-info.outputs.cluster_name }}
 
       # ==================== BUILD AND DEPLOY (PR opened/updated) ====================
-      # - name: Checkout app code
-      #   if: github.event.action != 'closed'
-      #   uses: actions/checkout@v4
+      - name: Checkout app code
+        if: github.event.action != 'closed'
+        uses: actions/checkout@v4
 
-      # - name: Build and push Docker image
-      #   if: github.event.action != 'closed'
-      #   env:
-      #     HARBOR_KEY: ${{ secrets.HARBOR_KEY }}
-      #   run: |
-      #     docker build -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:pr-${{ github.event.pull_request.number }} .
-      #     echo "${HARBOR_KEY}" | docker login registry.fullstack.pw -u admin --password-stdin
-      #     docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:pr-${{ github.event.pull_request.number }}
+      - name: Build and push Docker image
+        if: github.event.action != 'closed'
+        env:
+          HARBOR_KEY: ${{ secrets.HARBOR_KEY }}
+        run: |
+          docker build -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:pr-${{ github.event.pull_request.number }} .
+          echo "${HARBOR_KEY}" | docker login ${{ env.REGISTRY }} -u admin --password-stdin
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:pr-${{ github.event.pull_request.number }}
 
-      # - name: Get kubeconfig from Vault
-      #   if: github.event.action != 'closed'
-      #   env:
-      #     VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
-      #   run: |
-      #     vault kv get -field=PR_KUBECONFIG kv/cluster-secret-store/secrets > /tmp/pr-kubeconfig
-      #     # Extract just this cluster's context
-      #     export KUBECONFIG=/tmp/pr-kubeconfig
-      #     kubectl config use-context ${{ steps.cluster-info.outputs.cluster_name }}
+      - name: Deploy to ephemeral cluster
+        if: github.event.action != 'closed'
+        env:
+          KUBECONFIG: /tmp/kubeconfig
+        run: |
+          # Update image tag in kustomization
+          cd kustomize/overlays/ephemeral
+          kustomize edit set image ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:pr-${{ github.event.pull_request.number }}
+          cd ../../..
 
-      # - name: Deploy to ephemeral cluster
-      #   if: github.event.action != 'closed'
-      #   run: |
-      #     # Update image tag in kustomization
-      #     cd kustomize/overlays/ephemeral
-      #     kustomize edit set image registry.fullstack.pw/library/${{ github.event.repository.name }}=registry.fullstack.pw/library/${{ github.event.repository.name }}:pr-${{ github.event.pull_request.number }}
-      #     cd ../../..
+          # Apply kustomization
+          kubectl apply -k kustomize/overlays/ephemeral
 
-      #     # Apply kustomization
-      #     kubectl apply -k kustomize/overlays/ephemeral --kubeconfig /tmp/pr-kubeconfig
+          # Wait for deployment rollout
+          kubectl rollout status deployment/${{ github.event.repository.name }} \
+            -n default --timeout=5m
 
-      #     # Wait for deployment rollout
-      #     kubectl rollout status deployment/${{ github.event.repository.name }} \
-      #       -n default --timeout=5m --kubeconfig /tmp/pr-kubeconfig
+      - name: Run tests
+        if: github.event.action != 'closed'
+        run: |
+          echo "Tests would run here against https://${{ steps.cluster-info.outputs.dns_name }}"
+          # Example: npx cypress run --config baseUrl=https://${{ steps.cluster-info.outputs.dns_name }}
 
-      # - name: Run tests
-      #   if: github.event.action != 'closed'
-      #   run: |
-      #     echo "Tests would run here against https://${{ steps.cluster-info.outputs.dns_name }}"
-      #     # npx cypress run --config baseUrl=https://${{ steps.cluster-info.outputs.dns_name }}
+      - name: Post deployment info
+        if: github.event.action != 'closed' && steps.check-cluster.outputs.exists == 'false'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const dnsName = '${{ steps.cluster-info.outputs.dns_name }}';
+            const clusterName = '${{ steps.cluster-info.outputs.cluster_name }}';
 
-      # - name: Post deployment info
-      #   if: github.event.action != 'closed' && steps.check-cluster.outputs.exists == 'false'
-      #   uses: actions/github-script@v7
-      #   with:
-      #     github-token: ${{ secrets.GITHUB_TOKEN }}
-      #     script: |
-      #       const dnsName = '${{ steps.cluster-info.outputs.dns_name }}';
-      #       const clusterName = '${{ steps.cluster-info.outputs.cluster_name }}';
+            const body = `## Ephemeral Environment Ready
 
-      #       const body = `## Ephemeral Environment Ready
+            Your ephemeral environment has been deployed!
 
-      #       Your ephemeral environment has been deployed!
+            **URL**: https://${dnsName}
+            **Cluster**: \`${clusterName}\`
+            **Image**: \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:pr-${{ github.event.pull_request.number }}\`
 
-      #       **URL**: https://${dnsName}
-      #       **Cluster**: \`${clusterName}\`
+            The environment will be automatically destroyed when this PR is closed.
+            `;
 
-      #       The environment will be automatically destroyed when this PR is closed.
-      #       `;
-
-      #       github.rest.issues.createComment({
-      #         owner: context.repo.owner,
-      #         repo: context.repo.repo,
-      #         issue_number: context.issue.number,
-      #         body: body
-      #       });
+            github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: body
+            });
 
       # ==================== CLEANUP (PR closed) ====================
       - name: Get kubeconfig for destruction
