@@ -169,6 +169,9 @@ jobs:
           kubectl rollout status deployment/${{ github.event.repository.name }} \
             -n default --timeout=5m
 
+      - name: NPM install
+        run: npm install
+
       - name: Run tests
         if: github.event.action != 'closed'
         run: |
