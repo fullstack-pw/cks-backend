@@ -164,9 +164,12 @@ jobs:
         env:
           KUBECONFIG: /tmp/kubeconfig
         run: |
-          # Render manifests with updated image tag and apply
+          DNS_NAME="${{ steps.cluster-info.outputs.dns_name }}"
+
+          # Render manifests with updated image tag and DNS hostname
           kubectl kustomize kustomize/overlays/ephemeral \
             | sed "s|${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:pr-will-be-replaced|${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:pr-${{ github.event.pull_request.number }}|" \
+            | sed "s|dev.api.cks.fullstack.pw|${DNS_NAME}|g" \
             | kubectl apply -f -
 
           # Wait for deployment rollout
