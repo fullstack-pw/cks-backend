@@ -211,9 +211,10 @@ jobs:
   cypress-tests:
     needs: manage-environment
     if: github.event.action != 'closed' && needs.manage-environment.outputs.deployment_status == 'success'
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     container:
       image: cypress/included:13.6.4
+      options: --network host
     steps:
       - name: Checkout demo-apps repository
         uses: actions/checkout@v4
