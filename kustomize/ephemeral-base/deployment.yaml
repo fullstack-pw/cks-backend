@@ -1,0 +1,92 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cks-backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cks-backend
+  template:
+    metadata:
+      labels:
+        app: cks-backend
+    spec:
+      securityContext:
+        fsGroup: 1001
+      initContainers:
+        - name: setup-ssh
+          image: alpine:3.19
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              # Use cat to preserve exact format, then ensure newline
+              cat /tmp/ssh-key/id_ed25519 > /ssh-setup/id_ed25519
+              # Ensure file ends with newline
+              echo "" >> /ssh-setup/id_ed25519
+              chmod 600 /ssh-setup/id_ed25519
+              chown 1001:1001 /ssh-setup/id_ed25519
+              # Create known_hosts file
+              touch /ssh-setup/known_hosts
+              chmod 644 /ssh-setup/known_hosts
+              chown 1001:1001 /ssh-setup/known_hosts
+          volumeMounts:
+            - name: ssh-key-source
+              mountPath: /tmp/ssh-key
+              readOnly: true
+            - name: ssh-key-setup
+              mountPath: /ssh-setup
+          securityContext:
+            runAsUser: 0
+      containers:
+        - name: cks-backend
+          image: registry.fullstack.pw/library/cks-backend:latest
+          ports:
+            - containerPort: 8080
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+          env:
+            - name: KUBECONFIG
+              value: /etc/kubeconfig/KUBECONFIG
+          envFrom:
+            - configMapRef:
+                name: cks-backend-config
+          volumeMounts:
+            - name: kubeconfig
+              mountPath: /etc/kubeconfig
+              readOnly: true
+            - name: ssh-key-setup
+              mountPath: /home/appuser/.ssh
+              readOnly: false
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 20
+      volumes:
+        - name: kubeconfig
+          secret:
+            secretName: cluster-secrets
+            items:
+              - key: KUBECONFIG
+                path: KUBECONFIG
+        - name: ssh-key-source
+          secret:
+            secretName: cluster-secrets
+            items:
+              - key: SSH_PRIVATE_KEY
+                path: id_ed25519
+        - name: ssh-key-setup
+          emptyDir: {}

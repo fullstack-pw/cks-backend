@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: cks-backend
+spec:
+  selector:
+    app: cks-backend
+  ports:
+    - port: 8080
+      targetPort: 8080
+  type: ClusterIP
