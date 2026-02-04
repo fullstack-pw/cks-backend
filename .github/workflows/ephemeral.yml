@@ -12,6 +12,10 @@ env:
 jobs:
   manage-environment:
     runs-on: self-hosted
+    outputs:
+      dns_name: ${{ steps.cluster-info.outputs.dns_name }}
+      cluster_name: ${{ steps.cluster-info.outputs.cluster_name }}
+      deployment_status: ${{ steps.deployment-status.outputs.status }}
     steps:
       - name: Set cluster info
         id: cluster-info
@@ -169,14 +173,10 @@ jobs:
           kubectl rollout status deployment/${{ github.event.repository.name }} \
             -n default --timeout=5m
 
-      - name: NPM install
-        run: npm install
-
-      - name: Run tests
+      - name: Set deployment status
+        id: deployment-status
         if: github.event.action != 'closed'
-        run: |
-          echo "Tests would run here against https://${{ steps.cluster-info.outputs.dns_name }}"
-          npx cypress run --config baseUrl=https://${{ steps.cluster-info.outputs.dns_name }}
+        run: echo "status=success" >> $GITHUB_OUTPUT
 
       - name: Post deployment info
         if: github.event.action != 'closed' && steps.check-cluster.outputs.exists == 'false'
@@ -204,6 +204,37 @@ jobs:
               issue_number: context.issue.number,
               body: body
             });
+
+  cypress-tests:
+    needs: manage-environment
+    if: github.event.action != 'closed' && needs.manage-environment.outputs.deployment_status == 'success'
+    runs-on: ubuntu-latest
+    container:
+      image: cypress/included:13.6.4
+    steps:
+      - name: Checkout demo-apps repository
+        uses: actions/checkout@v4
+        with:
+          repository: fullstack-pw/demo-apps
+          path: .
+
+      - name: Run Cypress tests
+        env:
+          APP_URL: https://${{ needs.manage-environment.outputs.dns_name }}
+          APP_NAME: cks-backend
+          TEST_ENV: ephemeral
+          CYPRESS_CACHE_FOLDER: /tmp/.cache/Cypress
+        run: |
+          echo "Running Cypress tests for ${APP_NAME} at ${APP_URL}"
+
+          # Install dependencies
+          npm ci
+
+          # Run Cypress tests
+          npx cypress run \
+            --spec "cypress/e2e/${APP_NAME}.cy.js" \
+            --env CKS_BACKEND_URL=${APP_URL},TEST_ENV=${TEST_ENV} \
+            --config baseUrl=${APP_URL}
 
       # ==================== CLEANUP (PR closed) ====================
       - name: Get kubeconfig for destruction
