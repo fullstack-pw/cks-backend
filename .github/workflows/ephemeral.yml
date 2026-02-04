@@ -142,6 +142,19 @@ jobs:
           echo "${HARBOR_KEY}" | docker login ${{ env.REGISTRY }} -u admin --password-stdin
           docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:pr-${{ github.event.pull_request.number }}
 
+      - name: Extract kubeconfig
+        if: github.event.action != 'closed'
+        run: |
+          CLUSTER_NAME="${{ steps.cluster-info.outputs.cluster_name }}"
+          kubectl get secret ${CLUSTER_NAME}-kubeconfig \
+            -n $CLUSTER_NAME \
+            -o jsonpath='{.data.value}' --context tools --kubeconfig /home/runner/.kube/config | base64 -d > /tmp/kubeconfig
+
+          # Rename context to match workspace name for OpenTofu
+          ORIGINAL_CONTEXT=$(kubectl --kubeconfig /tmp/kubeconfig config current-context)
+          kubectl --kubeconfig /tmp/kubeconfig config rename-context "$ORIGINAL_CONTEXT" "$CLUSTER_NAME"
+          kubectl --kubeconfig /tmp/kubeconfig config use-context "$CLUSTER_NAME"
+
       - name: Deploy to ephemeral cluster
         if: github.event.action != 'closed'
         env:
