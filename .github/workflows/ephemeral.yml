@@ -173,7 +173,7 @@ jobs:
         if: github.event.action != 'closed'
         run: |
           echo "Tests would run here against https://${{ steps.cluster-info.outputs.dns_name }}"
-          # Example: npx cypress run --config baseUrl=https://${{ steps.cluster-info.outputs.dns_name }}
+          npx cypress run --config baseUrl=https://${{ steps.cluster-info.outputs.dns_name }}
 
       - name: Post deployment info
         if: github.event.action != 'closed' && steps.check-cluster.outputs.exists == 'false'
