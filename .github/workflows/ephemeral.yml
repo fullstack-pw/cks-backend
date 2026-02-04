@@ -147,26 +147,14 @@ jobs:
         env:
           KUBECONFIG: /tmp/kubeconfig
         run: |
-          # Update image tag in kustomization
-          cd kustomize/overlays/ephemeral
-          kubectl kustomize .\
-            | sed "s|latest|pr-${{ github.event.pull_request.number }}|" \
-            > manifest.yaml
-          kustomize edit set image ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:pr-${{ github.event.pull_request.number }}
-          cd ../../..
-
-          # Apply kustomization
-          kubectl apply -k kustomize/overlays/ephemeral
+          # Render manifests with updated image tag and apply
+          kubectl kustomize kustomize/overlays/ephemeral \
+            | sed "s|newTag: pr-will-be-replaced|newTag: pr-${{ github.event.pull_request.number }}|" \
+            | kubectl apply -f -
 
           # Wait for deployment rollout
           kubectl rollout status deployment/${{ github.event.repository.name }} \
             -n default --timeout=5m
-
-
-          cat manifest.yaml
-          kubectl config current-context
-          kubectl apply -f manifest.yaml
-          kubectl rollout status deployment/${{ inputs.app-name }} -n default --timeout=5m || exit 1
 
       - name: Run tests
         if: github.event.action != 'closed'

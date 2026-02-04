@@ -4,20 +4,29 @@ kind: Kustomization
 namespace: default
 
 resources:
-  - service.yaml
-  - configmap.yaml
-  - deployment.yaml
+  - ../../ephemeral-base
 
 images:
   - name: registry.fullstack.pw/library/cks-backend
     newTag: pr-will-be-replaced
+
+patches:
+  - patch: |-
+      - op: replace
+        path: /metadata/annotations/external-dns.alpha.kubernetes.io~1hostname
+        value: "dev.api.cks.fullstack.pw"
+      - op: replace
+        path: /spec/tls/0/hosts/0
+        value: "dev.api.cks.fullstack.pw"
+      - op: replace
+        path: /spec/rules/0/host
+        value: "dev.api.cks.fullstack.pw"
+    target:
+      kind: Ingress
+      name: cks-backend
 
 configMapGenerator:
   - name: cks-backend-config
     behavior: merge
     envs:
       - configmap
-
-replicas:
-  - name: cks-backend
-    count: 1
