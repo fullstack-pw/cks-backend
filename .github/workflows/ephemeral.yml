@@ -6,7 +6,7 @@ on:
 
 env:
   REGISTRY: registry.fullstack.pw
-  IMAGE_NAME: ${{ github.repository }}
+  IMAGE_NAME: library/cks-backend
   VAULT_ADDR: https://vault.fullstack.pw
 
 jobs:
@@ -162,7 +162,7 @@ jobs:
         run: |
           # Render manifests with updated image tag and apply
           kubectl kustomize kustomize/overlays/ephemeral \
-            | sed "s|newTag: pr-will-be-replaced|newTag: pr-${{ github.event.pull_request.number }}|" \
+            | sed "s|${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:pr-will-be-replaced|${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:pr-${{ github.event.pull_request.number }}|" \
             | kubectl apply -f -
 
           # Wait for deployment rollout
