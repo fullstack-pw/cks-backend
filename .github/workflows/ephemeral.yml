@@ -272,14 +272,27 @@ jobs:
 
           npm ci
 
+          set +e
           npx cypress run \
             --spec "cypress/e2e/${APP_NAME}.cy.js" \
             --env CKS_BACKEND_URL=${APP_URL},TEST_ENV=${TEST_ENV} \
             --config baseUrl=${APP_URL} \
             --reporter json \
-            --reporter-options "output=cypress-results.json" || echo "Cypress tests completed with exit code $?"
+            --reporter-options "output=cypress-results.json"
 
-          ls -la cypress-results.json || echo "Results file not found"
+          CYPRESS_EXIT_CODE=$?
+          set -e
+
+          echo "Cypress exit code: $CYPRESS_EXIT_CODE"
+          echo "cypress_exit_code=$CYPRESS_EXIT_CODE" >> $GITHUB_OUTPUT
+
+          if [ -f cypress-results.json ]; then
+            echo "Results file found:"
+            ls -la cypress-results.json
+          else
+            echo "Results file NOT found - creating empty results"
+            echo '{"stats":{"tests":0,"passes":0,"failures":1,"pending":0,"duration":0},"runs":[]}' > cypress-results.json
+          fi
 
       - name: Post Cypress results
         if: always()
@@ -290,6 +303,7 @@ jobs:
             const fs = require('fs');
             const path = require('path');
             const dnsName = '${{ needs.manage-environment.outputs.dns_name }}';
+            const cypressExitCode = '${{ steps.cypress.outputs.cypress_exit_code }}';
 
             const resultsPath = path.join(process.env.GITHUB_WORKSPACE, 'cypress-results.json');
             console.log(`Looking for results at: ${resultsPath}`);
@@ -299,14 +313,16 @@ jobs:
               if (!fs.existsSync(resultsPath)) {
                 throw new Error(`File does not exist at ${resultsPath}`);
               }
-              results = JSON.parse(fs.readFileSync(resultsPath, 'utf8'));
+              const rawData = fs.readFileSync(resultsPath, 'utf8');
+              console.log('Raw results file content:', rawData.substring(0, 500));
+              results = JSON.parse(rawData);
             } catch (error) {
               console.error('Error reading results:', error);
               github.rest.issues.createComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: context.issue.number,
-                body: `## Cypress Tests - Error\n\nFailed to read test results: ${error.message}\n\nExpected path: \`${resultsPath}\``
+                body: `## Cypress Tests - Error\n\nFailed to parse test results: ${error.message}\n\nCypress exit code: ${cypressExitCode}\n\nExpected path: \`${resultsPath}\``
               });
               return;
             }
