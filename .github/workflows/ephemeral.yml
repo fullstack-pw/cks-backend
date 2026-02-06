@@ -9,6 +9,10 @@ env:
   IMAGE_NAME: library/cks-backend
   VAULT_ADDR: https://vault.fullstack.pw
 
+permissions:
+  contents: write
+  pull-requests: write
+
 jobs:
   manage-environment:
     runs-on: self-hosted
@@ -24,6 +28,10 @@ jobs:
           DNS_NAME="pr-${{ github.event.pull_request.number }}-${{ github.event.repository.name }}.ephemeral.fullstack.pw"
           echo "cluster_name=$CLUSTER_NAME" >> $GITHUB_OUTPUT
           echo "dns_name=$DNS_NAME" >> $GITHUB_OUTPUT
+
+      - name: Checkout app code
+        if: github.event.action != 'closed'
+        uses: actions/checkout@v4
 
       - name: Checkout infra repo
         uses: actions/checkout@v4
@@ -135,9 +143,6 @@ jobs:
           make ephemeral-apply WORKSPACE=${{ steps.cluster-info.outputs.cluster_name }}
 
       # ==================== BUILD AND DEPLOY (PR opened/updated) ====================
-      - name: Checkout app code
-        if: github.event.action != 'closed'
-        uses: actions/checkout@v4
 
       - name: Build and push Docker image
         if: github.event.action != 'closed'
