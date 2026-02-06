@@ -234,6 +234,7 @@ jobs:
           cd infra
           CLUSTER_NAME="${{ steps.cluster-info.outputs.cluster_name }}"
 
+          make ephemeral-init
           make ephemeral-destroy WORKSPACE=${{ steps.cluster-info.outputs.cluster_name }} || true
 
           kubectl delete cluster "$CLUSTER_NAME" -n "$CLUSTER_NAME" --context tools --kubeconfig /home/runner/.kube/config || true
