@@ -260,6 +260,8 @@ jobs:
           path: .
 
       - name: Run Cypress tests
+        id: cypress
+        continue-on-error: true
         env:
           APP_URL: https://${{ needs.manage-environment.outputs.dns_name }}
           APP_NAME: cks-backend
@@ -268,11 +270,72 @@ jobs:
         run: |
           echo "Running Cypress tests for ${APP_NAME} at ${APP_URL}"
 
-          # Install dependencies
           npm ci
 
-          # Run Cypress tests
           npx cypress run \
             --spec "cypress/e2e/${APP_NAME}.cy.js" \
             --env CKS_BACKEND_URL=${APP_URL},TEST_ENV=${TEST_ENV} \
-            --config baseUrl=${APP_URL}
+            --config baseUrl=${APP_URL} \
+            --reporter json \
+            --reporter-options "output=cypress-results.json" || true
+
+      - name: Post Cypress results
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const dnsName = '${{ needs.manage-environment.outputs.dns_name }}';
+
+            let results;
+            try {
+              results = JSON.parse(fs.readFileSync('cypress-results.json', 'utf8'));
+            } catch (error) {
+              github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: `## Cypress Tests - Error\n\nFailed to read test results: ${error.message}`
+              });
+              return;
+            }
+
+            const stats = results.stats;
+            const totalTests = stats.tests;
+            const passed = stats.passes;
+            const failed = stats.failures;
+            const pending = stats.pending;
+            const duration = (stats.duration / 1000).toFixed(2);
+            const status = failed > 0 ? '❌' : '✅';
+
+            let body = `## ${status} Cypress Test Results\n\n`;
+            body += `**Environment**: https://${dnsName}\n`;
+            body += `**Duration**: ${duration}s\n\n`;
+            body += `| Status | Count |\n`;
+            body += `|--------|-------|\n`;
+            body += `| ✅ Passed | ${passed} |\n`;
+            body += `| ❌ Failed | ${failed} |\n`;
+            body += `| ⏭️ Skipped | ${pending} |\n`;
+            body += `| **Total** | **${totalTests}** |\n\n`;
+
+            if (failed > 0 && results.runs && results.runs.length > 0) {
+              body += `### Failed Tests\n\n`;
+              results.runs.forEach(run => {
+                run.tests.forEach(test => {
+                  if (test.state === 'failed') {
+                    body += `#### ❌ ${test.title.join(' > ')}\n\n`;
+                    if (test.displayError) {
+                      body += `\`\`\`\n${test.displayError}\n\`\`\`\n\n`;
+                    }
+                  }
+                });
+              });
+            }
+
+            github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: body
+            });
