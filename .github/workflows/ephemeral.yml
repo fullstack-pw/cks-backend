@@ -277,8 +277,7 @@ jobs:
             --spec "cypress/e2e/${APP_NAME}.cy.js" \
             --env CKS_BACKEND_URL=${APP_URL},TEST_ENV=${TEST_ENV} \
             --config baseUrl=${APP_URL} \
-            --reporter json \
-            --reporter-options "output=cypress-results.json"
+            --reporter json 2>/dev/null > cypress-results.json
 
           CYPRESS_EXIT_CODE=$?
           set -e
@@ -289,8 +288,11 @@ jobs:
           if [ -f cypress-results.json ]; then
             echo "Results file found:"
             ls -la cypress-results.json
+            echo "First 200 chars of results:"
+            head -c 200 cypress-results.json
+            echo ""
           else
-            echo "Results file NOT found - creating empty results"
+            echo "Results file NOT found - this should not happen"
             echo '{"stats":{"tests":0,"passes":0,"failures":1,"pending":0,"duration":0},"runs":[]}' > cypress-results.json
           fi
 
