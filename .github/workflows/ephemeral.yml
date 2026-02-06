@@ -277,7 +277,9 @@ jobs:
             --env CKS_BACKEND_URL=${APP_URL},TEST_ENV=${TEST_ENV} \
             --config baseUrl=${APP_URL} \
             --reporter json \
-            --reporter-options "output=cypress-results.json" || true
+            --reporter-options "output=cypress-results.json" || echo "Cypress tests completed with exit code $?"
+
+          ls -la cypress-results.json || echo "Results file not found"
 
       - name: Post Cypress results
         if: always()
@@ -286,17 +288,25 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const fs = require('fs');
+            const path = require('path');
             const dnsName = '${{ needs.manage-environment.outputs.dns_name }}';
+
+            const resultsPath = path.join(process.env.GITHUB_WORKSPACE, 'cypress-results.json');
+            console.log(`Looking for results at: ${resultsPath}`);
 
             let results;
             try {
-              results = JSON.parse(fs.readFileSync('cypress-results.json', 'utf8'));
+              if (!fs.existsSync(resultsPath)) {
+                throw new Error(`File does not exist at ${resultsPath}`);
+              }
+              results = JSON.parse(fs.readFileSync(resultsPath, 'utf8'));
             } catch (error) {
+              console.error('Error reading results:', error);
               github.rest.issues.createComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: context.issue.number,
-                body: `## Cypress Tests - Error\n\nFailed to read test results: ${error.message}`
+                body: `## Cypress Tests - Error\n\nFailed to read test results: ${error.message}\n\nExpected path: \`${resultsPath}\``
               });
               return;
             }
