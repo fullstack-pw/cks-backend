@@ -267,6 +267,7 @@ jobs:
           APP_NAME: cks-backend
           TEST_ENV: ephemeral
           CYPRESS_CACHE_FOLDER: /tmp/.cache/Cypress
+          CI: 1
         run: |
           echo "Running Cypress tests for ${APP_NAME} at ${APP_URL}"
 
@@ -277,7 +278,9 @@ jobs:
             --spec "cypress/e2e/${APP_NAME}.cy.js" \
             --env CKS_BACKEND_URL=${APP_URL},TEST_ENV=${TEST_ENV} \
             --config baseUrl=${APP_URL} \
-            --reporter json 2>/dev/null > cypress-results.json
+            --reporter json \
+            --reporter-options output=cypress-results.json \
+            --quiet
 
           CYPRESS_EXIT_CODE=$?
           set -e
@@ -288,8 +291,8 @@ jobs:
           if [ -f cypress-results.json ]; then
             echo "Results file found:"
             ls -la cypress-results.json
-            echo "First 200 chars of results:"
-            head -c 200 cypress-results.json
+            echo "First 500 chars of results:"
+            head -c 500 cypress-results.json
             echo ""
           else
             echo "Results file NOT found - this should not happen"
@@ -315,8 +318,16 @@ jobs:
               if (!fs.existsSync(resultsPath)) {
                 throw new Error(`File does not exist at ${resultsPath}`);
               }
-              const rawData = fs.readFileSync(resultsPath, 'utf8');
-              console.log('Raw results file content:', rawData.substring(0, 500));
+              let rawData = fs.readFileSync(resultsPath, 'utf8');
+              console.log('Raw results file content (first 500 chars):', rawData.substring(0, 500));
+
+              // Try to find JSON object in the output
+              const jsonMatch = rawData.match(/\{[\s\S]*\}/);
+              if (jsonMatch) {
+                rawData = jsonMatch[0];
+                console.log('Extracted JSON:', rawData.substring(0, 200));
+              }
+
               results = JSON.parse(rawData);
             } catch (error) {
               console.error('Error reading results:', error);
