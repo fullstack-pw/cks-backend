@@ -145,11 +145,14 @@ jobs:
       # ==================== BUILD AND DEPLOY (PR opened/updated) ====================
 
       - name: Build and push Docker image
+        id: build
         if: github.event.action != 'closed'
         run: |
-          docker build -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:pr-${{ github.event.pull_request.number }} .
+          IMAGE_TAG="pr-${{ github.event.pull_request.number }}-${{ github.sha }}"
+          docker build -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${IMAGE_TAG} .
           echo "${HARBOR_KEY}" | docker login ${{ env.REGISTRY }} -u admin --password-stdin
-          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:pr-${{ github.event.pull_request.number }}
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${IMAGE_TAG}
+          echo "image_tag=${IMAGE_TAG}" >> $GITHUB_OUTPUT
 
       - name: Extract kubeconfig
         if: github.event.action != 'closed'
@@ -170,10 +173,11 @@ jobs:
           KUBECONFIG: /tmp/kubeconfig
         run: |
           DNS_NAME="${{ steps.cluster-info.outputs.dns_name }}"
+          IMAGE_TAG="${{ steps.build.outputs.image_tag }}"
 
           # Render manifests with updated image tag and DNS hostname
           kubectl kustomize kustomize/overlays/ephemeral \
-            | sed "s|${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:pr-will-be-replaced|${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:pr-${{ github.event.pull_request.number }}|" \
+            | sed "s|${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:pr-will-be-replaced|${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${IMAGE_TAG}|" \
             | sed "s|dev.api.cks.fullstack.pw|${DNS_NAME}|g" \
             | kubectl apply -f -
 
@@ -194,6 +198,7 @@ jobs:
           script: |
             const dnsName = '${{ steps.cluster-info.outputs.dns_name }}';
             const clusterName = '${{ steps.cluster-info.outputs.cluster_name }}';
+            const imageTag = '${{ steps.build.outputs.image_tag }}';
 
             const body = `## Ephemeral Environment Ready
 
@@ -201,7 +206,7 @@ jobs:
 
             **URL**: https://${dnsName}
             **Cluster**: \`${clusterName}\`
-            **Image**: \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:pr-${{ github.event.pull_request.number }}\`
+            **Image**: \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${imageTag}\`
 
             The environment will be automatically destroyed when this PR is closed.
             `;
