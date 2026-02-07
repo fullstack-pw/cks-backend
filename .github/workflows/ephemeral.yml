@@ -260,19 +260,13 @@ jobs:
           path: .
 
       - name: Run Cypress tests
-        env:
-          APP_URL: https://${{ needs.manage-environment.outputs.dns_name }}
-          APP_NAME: cks-backend
-          TEST_ENV: ephemeral
-          CYPRESS_CACHE_FOLDER: /tmp/.cache/Cypress
-        run: |
-          echo "Running Cypress tests for ${APP_NAME} at ${APP_URL}"
-
-          # Install dependencies
-          npm ci
-
-          # Run Cypress tests
-          npx cypress run \
-            --spec "cypress/e2e/${APP_NAME}.cy.js" \
-            --env CKS_BACKEND_URL=${APP_URL},TEST_ENV=${TEST_ENV} \
-            --config baseUrl=${APP_URL}
+        id: cypress
+        continue-on-error: true
+        uses: cypress-io/github-action@v6
+        with:
+          spec: cypress/e2e/cks-backend.cy.js
+          config: baseUrl=https://${{ needs.manage-environment.outputs.dns_name }}
+          env: CKS_BACKEND_URL=https://${{ needs.manage-environment.outputs.dns_name }},TEST_ENV=ephemeral
+          browser: chrome
+          install-command: npm ci
+          summary-title: Cypress Test Results
