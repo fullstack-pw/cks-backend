@@ -33,7 +33,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.RUNNER }}
           fetch-depth: 0
 
       - name: Update dev kustomization with new image tag
