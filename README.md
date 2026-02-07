@@ -610,8 +610,3 @@ cks-backend/
 - Private key mounted read-only
 - Temp kubeconfig with restricted permissions
 
----
-
-**Version**: 0.1.0
-**License**: Proprietary
-**Repository**: https://github.com/fullstack-pw/cks-backend
