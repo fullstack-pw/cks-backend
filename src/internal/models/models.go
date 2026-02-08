@@ -181,13 +181,7 @@ type CreateTerminalRequest struct {
 
 // CreateTerminalResponse represents a response to a create terminal request
 type CreateTerminalResponse struct {
-	TerminalID string `json:"terminalId"`
-}
-
-// ResizeTerminalRequest represents a request to resize a terminal
-type ResizeTerminalRequest struct {
-	Rows uint16 `json:"rows"`
-	Cols uint16 `json:"cols"`
+	TerminalURL string `json:"terminalUrl"`
 }
 
 type SetupCondition struct {

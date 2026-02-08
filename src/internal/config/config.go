@@ -40,6 +40,9 @@ type Config struct {
 	GoldenImageNamespace string // Namespace where golden images are stored
 	ValidateGoldenImage  bool   // Whether to validate image exists before VM creation
 
+	// Terminal management
+	TerminalMgmtURL string
+
 	// Scenario settings
 	ScenariosPath string
 }
@@ -76,6 +79,9 @@ func LoadConfig() (*Config, error) {
 		GoldenImageName:      getEnv("GOLDEN_IMAGE_NAME", "new-golden-image-1-33-0"),
 		GoldenImageNamespace: getEnv("GOLDEN_IMAGE_NAMESPACE", "vm-templates"),
 		ValidateGoldenImage:  getEnvAsBool("VALIDATE_GOLDEN_IMAGE", true),
+
+		// Terminal management
+		TerminalMgmtURL: getEnv("TERMINAL_MGMT_URL", "https://terminal.cks.fullstack.pw"),
 
 		// Scenario defaults
 		ScenariosPath: getEnv("SCENARIOS_PATH", "scenarios"),

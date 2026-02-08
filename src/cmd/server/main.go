@@ -25,7 +25,6 @@ import (
 	"github.com/fullstack-pw/cks/backend/internal/scenarios"
 	"github.com/fullstack-pw/cks/backend/internal/services"
 	"github.com/fullstack-pw/cks/backend/internal/sessions"
-	"github.com/fullstack-pw/cks/backend/internal/terminal"
 	"github.com/fullstack-pw/cks/backend/internal/validation"
 )
 
@@ -194,12 +193,7 @@ func main() {
 		logger.WithError(err).Fatal("Failed to create kubevirt client")
 	}
 
-	// Rest of the main function remains the same...
-	// Create unified validator (ADD THIS)
 	unifiedValidator := validation.NewUnifiedValidator(kubevirtClient, logger)
-
-	// Create terminal manager (existing)
-	terminalManager := terminal.NewManager(kubeClient, kubevirtClient, k8sConfig, logger)
 
 	// Create scenario manager first
 	scenarioManager, err := scenarios.NewScenarioManager(cfg.ScenariosPath, logger)
@@ -221,9 +215,8 @@ func main() {
 
 	// Create service layer implementations
 	sessionService := services.NewSessionService(sessionManager)
-	terminalService := services.NewTerminalService(terminalManager)
+	terminalService := services.NewTerminalService(kubevirtClient, cfg)
 	scenarioService := services.NewScenarioService(scenarioManager)
-	sessionManager.SetTerminalCleanupFunc(terminalService.CleanupSessionSSH)
 
 	// Create and register controllers
 	sessionController := controllers.NewSessionController(sessionService, scenarioService, logger, unifiedValidator)
@@ -243,7 +236,7 @@ func main() {
 		Addr:         fmt.Sprintf("%s:%d", cfg.ServerHost, cfg.ServerPort),
 		Handler:      router,
 		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 300 * time.Second, // Longer timeout for WebSockets
+		WriteTimeout: 30 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}
 
