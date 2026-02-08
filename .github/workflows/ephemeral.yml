@@ -140,7 +140,7 @@ jobs:
         run: |
           cd infra
           make ephemeral-init
-          make ephemeral-apply WORKSPACE=${{ steps.cluster-info.outputs.cluster_name }}
+          make ephemeral-apply WORKSPACE=${{ steps.cluster-info.outputs.cluster_name }} MINIMAL=true
 
       # ==================== BUILD AND DEPLOY (PR opened/updated) ====================
 

@@ -22,5 +22,6 @@ data:
   GOLDEN_IMAGE_NAME: new-golden-image-1-33-0
   GOLDEN_IMAGE_NAMESPACE: vm-templates
   VALIDATE_GOLDEN_IMAGE: true
+  TERMINAL_MGMT_URL: https://terminal.cks.fullstack.pw
   TEMPLATE_PATH: /app/templates
   SCENARIOS_PATH: /app/scenarios

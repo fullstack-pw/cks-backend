@@ -4,7 +4,6 @@ package services
 
 import (
 	"context"
-	"net/http"
 	"time"
 
 	"github.com/fullstack-pw/cks/backend/internal/models"
@@ -31,11 +30,7 @@ type SessionService interface {
 
 // TerminalService defines the interface for terminal-related operations
 type TerminalService interface {
-	CreateSession(sessionID, namespace, target string) (string, error)
-	HandleTerminal(w http.ResponseWriter, r *http.Request, terminalID string)
-	ResizeTerminal(terminalID string, rows, cols uint16) error
-	CloseSession(terminalID string) error
-	CleanupSessionSSH(sessionID string) // Add this method
+	GetTerminalURL(ctx context.Context, namespace, vmName string) (string, error)
 }
 
 // ScenarioService defines the interface for scenario-related operations

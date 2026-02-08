@@ -339,8 +339,8 @@ func (c *Client) CreateCluster(ctx context.Context, namespace, controlPlaneName,
 		return c.createCloudInitSecret(ctx, namespace, workerNodeName, "worker", map[string]string{
 			"JOIN_COMMAND":           joinCommand,
 			"JOIN":                   joinCommand,
-			"CONTROL_PLANE_ENDPOINT": fmt.Sprintf("%s.%s.pod.cluster.local", strings.ReplaceAll(c.getVMIP(ctx, namespace, controlPlaneName), ".", "-"), namespace),
-			"CONTROL_PLANE_IP":       c.getVMIP(ctx, namespace, controlPlaneName),
+			"CONTROL_PLANE_ENDPOINT": fmt.Sprintf("%s.%s.pod.cluster.local", strings.ReplaceAll(c.GetVMIP(ctx, namespace, controlPlaneName), ".", "-"), namespace),
+			"CONTROL_PLANE_IP":       c.GetVMIP(ctx, namespace, controlPlaneName),
 			"CONTROL_PLANE_VM_NAME":  controlPlaneName,
 		})
 	})
@@ -695,8 +695,8 @@ func (c *Client) getJoinCommand(ctx context.Context, namespace, controlPlaneName
 	return joinCommand, nil
 }
 
-// getVMIP gets the IP address of a VM
-func (c *Client) getVMIP(ctx context.Context, namespace, vmName string) string {
+// GetVMIP gets the IP address of a VM
+func (c *Client) GetVMIP(ctx context.Context, namespace, vmName string) string {
 	var ip string
 	err := wait.PollImmediate(5*time.Second, 2*time.Minute, func() (bool, error) {
 		// Get VM instance
