@@ -53,6 +53,11 @@ spec:
           env:
             - name: KUBECONFIG
               value: /etc/kubeconfig/KUBECONFIG
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: cluster-secrets
+                  key: REDIS_PASSWORD
           envFrom:
             - configMapRef:
                 name: cks-backend-config

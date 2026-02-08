@@ -1,11 +1,8 @@
-// backend/internal/sessions/session_manager.go - SessionManager implementation
-
 package sessions
 
 import (
 	"context"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -25,16 +22,15 @@ import (
 )
 
 type SessionManager struct {
-	sessions            map[string]*models.Session
-	lock                sync.RWMutex
-	clientset           *kubernetes.Clientset
-	kubevirtClient      *kubevirt.Client
-	config              *config.Config
-	unifiedValidator    *validation.UnifiedValidator
-	logger              *logrus.Logger
-	stopCh              chan struct{}
-	scenarioManager     *scenarios.ScenarioManager
-	clusterPool         *clusterpool.Manager
+	store            SessionStore
+	clientset        *kubernetes.Clientset
+	kubevirtClient   *kubevirt.Client
+	config           *config.Config
+	unifiedValidator *validation.UnifiedValidator
+	logger           *logrus.Logger
+	stopCh           chan struct{}
+	scenarioManager  *scenarios.ScenarioManager
+	clusterPool      *clusterpool.Manager
 }
 
 func NewSessionManager(
@@ -45,9 +41,10 @@ func NewSessionManager(
 	logger *logrus.Logger,
 	scenarioManager *scenarios.ScenarioManager,
 	clusterPool *clusterpool.Manager,
+	store SessionStore,
 ) (*SessionManager, error) {
 	sm := &SessionManager{
-		sessions:         make(map[string]*models.Session),
+		store:            store,
 		clientset:        clientset,
 		kubevirtClient:   kubevirtClient,
 		config:           cfg,
@@ -55,32 +52,27 @@ func NewSessionManager(
 		logger:           logger,
 		stopCh:           make(chan struct{}),
 		scenarioManager:  scenarioManager,
-		clusterPool:      clusterPool, // Add this line
+		clusterPool:      clusterPool,
 	}
 
-	// Clean stale terminals after backend restart
 	sm.cleanStaleTerminals()
 
-	// Start session cleanup goroutine
 	go sm.cleanupExpiredSessions()
 
 	return sm, nil
 }
 
-// CreateSession creates a new session using cluster pool assignment
 func (sm *SessionManager) CreateSession(ctx context.Context, scenarioID string) (*models.Session, error) {
-	sm.lock.Lock()
-	defer sm.lock.Unlock()
-
-	// Check if maximum sessions exceeded
-	if len(sm.sessions) >= sm.config.MaxConcurrentSessions {
+	count, err := sm.store.Count(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to count sessions: %w", err)
+	}
+	if count >= sm.config.MaxConcurrentSessions {
 		return nil, fmt.Errorf("maximum number of concurrent sessions reached")
 	}
 
-	// Generate session ID
 	sessionID := uuid.New().String()[:8]
 
-	// Assign cluster from pool
 	assignedCluster, err := sm.clusterPool.AssignCluster(sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to assign cluster: %w", err)
@@ -92,23 +84,18 @@ func (sm *SessionManager) CreateSession(ctx context.Context, scenarioID string) 
 		"namespace": assignedCluster.Namespace,
 	}).Info("Cluster assigned to session")
 
-	// Initialize variables
 	var tasks []models.TaskStatus
 	var scenarioTitle string
 
-	// Load scenario if specified
 	if scenarioID != "" {
 		scenario, err := sm.loadScenario(ctx, scenarioID)
 		if err != nil {
-			// Release cluster on error
 			sm.clusterPool.ReleaseCluster(sessionID)
 			return nil, fmt.Errorf("failed to load scenario: %w", err)
 		}
 
-		// Store scenario title for logging
 		scenarioTitle = scenario.Title
 
-		// Initialize task statuses from loaded scenario
 		tasks = make([]models.TaskStatus, 0, len(scenario.Tasks))
 		for _, task := range scenario.Tasks {
 			tasks = append(tasks, models.TaskStatus{
@@ -125,25 +112,26 @@ func (sm *SessionManager) CreateSession(ctx context.Context, scenarioID string) 
 		}).Info("Initialized session with scenario tasks")
 	}
 
-	// Create session object using assigned cluster
 	session := &models.Session{
 		ID:               sessionID,
-		Namespace:        assignedCluster.Namespace, // Use cluster namespace
+		Namespace:        assignedCluster.Namespace,
 		ScenarioID:       scenarioID,
-		Status:           models.SessionStatusRunning, // Immediate running status
+		Status:           models.SessionStatusRunning,
 		StartTime:        time.Now(),
 		ExpirationTime:   time.Now().Add(time.Duration(sm.config.SessionTimeoutMinutes) * time.Minute),
-		ControlPlaneVM:   assignedCluster.ControlPlaneVM, // Use cluster VMs
-		WorkerNodeVM:     assignedCluster.WorkerNodeVM,   // Use cluster VMs
+		ControlPlaneVM:   assignedCluster.ControlPlaneVM,
+		WorkerNodeVM:     assignedCluster.WorkerNodeVM,
 		Tasks:            tasks,
 		TerminalSessions: make(map[string]string),
 		ActiveTerminals:  make(map[string]models.TerminalInfo),
-		AssignedCluster:  assignedCluster.ClusterID, // Track assigned cluster
-		ClusterLockTime:  assignedCluster.LockTime,  // Track lock time
+		AssignedCluster:  assignedCluster.ClusterID,
+		ClusterLockTime:  assignedCluster.LockTime,
 	}
 
-	// Store session
-	sm.sessions[sessionID] = session
+	if err := sm.store.Save(ctx, session); err != nil {
+		sm.clusterPool.ReleaseCluster(sessionID)
+		return nil, fmt.Errorf("failed to save session: %w", err)
+	}
 
 	sm.logger.WithFields(logrus.Fields{
 		"sessionID":      sessionID,
@@ -155,7 +143,6 @@ func (sm *SessionManager) CreateSession(ctx context.Context, scenarioID string) 
 		"workerNodeVM":   session.WorkerNodeVM,
 	}).Info("Session created with assigned cluster - ready immediately")
 
-	// Initialize scenario in background if needed
 	if scenarioID != "" {
 		go func() {
 			initCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -171,51 +158,41 @@ func (sm *SessionManager) CreateSession(ctx context.Context, scenarioID string) 
 	return session, nil
 }
 
-// GetSession returns a session by ID
 func (sm *SessionManager) GetSession(sessionID string) (*models.Session, error) {
-	sm.lock.RLock()
-	defer sm.lock.RUnlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 
-	session, ok := sm.sessions[sessionID]
-	if !ok {
-		return nil, fmt.Errorf("session not found: %s", sessionID)
-	}
-
-	return session, nil
+	return sm.store.Get(ctx, sessionID)
 }
 
-// ListSessions returns all active sessions
 func (sm *SessionManager) ListSessions() []*models.Session {
-	sm.lock.RLock()
-	defer sm.lock.RUnlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 
-	sessions := make([]*models.Session, 0, len(sm.sessions))
-	for _, session := range sm.sessions {
-		sessions = append(sessions, session)
+	sessions, err := sm.store.List(ctx)
+	if err != nil {
+		sm.logger.WithError(err).Error("Failed to list sessions")
+		return []*models.Session{}
 	}
 
 	return sessions
 }
 
-// DeleteSession deletes a session and releases its cluster
 func (sm *SessionManager) DeleteSession(ctx context.Context, sessionID string) error {
-	sm.lock.Lock()
-	session, ok := sm.sessions[sessionID]
-	if !ok {
-		sm.lock.Unlock()
+	session, err := sm.store.Get(ctx, sessionID)
+	if err != nil {
 		return fmt.Errorf("session not found: %s", sessionID)
 	}
 
-	// Remove from session map immediately
-	delete(sm.sessions, sessionID)
-	sm.lock.Unlock()
+	if err := sm.store.Delete(ctx, sessionID); err != nil {
+		return fmt.Errorf("failed to delete session: %w", err)
+	}
 
 	sm.logger.WithFields(logrus.Fields{
 		"sessionID": sessionID,
 		"clusterID": session.AssignedCluster,
 	}).Info("Deleting session and releasing cluster")
 
-	// Release cluster back to pool
 	if session.AssignedCluster != "" {
 		err := sm.clusterPool.ReleaseCluster(sessionID)
 		if err != nil {
@@ -228,18 +205,20 @@ func (sm *SessionManager) DeleteSession(ctx context.Context, sessionID string) e
 	return nil
 }
 
-// ExtendSession extends the expiration time of a session
 func (sm *SessionManager) ExtendSession(sessionID string, duration time.Duration) error {
-	sm.lock.Lock()
-	defer sm.lock.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 
-	session, ok := sm.sessions[sessionID]
-	if !ok {
+	session, err := sm.store.Get(ctx, sessionID)
+	if err != nil {
 		return fmt.Errorf("session not found: %s", sessionID)
 	}
 
-	// Extend expiration time
 	session.ExpirationTime = time.Now().Add(duration)
+
+	if err := sm.store.Save(ctx, session); err != nil {
+		return fmt.Errorf("failed to save session: %w", err)
+	}
 
 	sm.logger.WithFields(logrus.Fields{
 		"sessionID":      sessionID,
@@ -249,17 +228,15 @@ func (sm *SessionManager) ExtendSession(sessionID string, duration time.Duration
 	return nil
 }
 
-// UpdateTaskStatus updates the status of a task in a session
 func (sm *SessionManager) UpdateTaskStatus(sessionID, taskID string, status string) error {
-	sm.lock.Lock()
-	defer sm.lock.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 
-	session, ok := sm.sessions[sessionID]
-	if !ok {
+	session, err := sm.store.Get(ctx, sessionID)
+	if err != nil {
 		return fmt.Errorf("session not found: %s", sessionID)
 	}
 
-	// Find task and update status
 	found := false
 	for i, task := range session.Tasks {
 		if task.ID == taskID {
@@ -270,13 +247,16 @@ func (sm *SessionManager) UpdateTaskStatus(sessionID, taskID string, status stri
 		}
 	}
 
-	// Task not found, add it
 	if !found {
 		session.Tasks = append(session.Tasks, models.TaskStatus{
 			ID:             taskID,
 			Status:         status,
 			ValidationTime: time.Now(),
 		})
+	}
+
+	if err := sm.store.Save(ctx, session); err != nil {
+		return fmt.Errorf("failed to save session: %w", err)
 	}
 
 	sm.logger.WithFields(logrus.Fields{
@@ -288,15 +268,12 @@ func (sm *SessionManager) UpdateTaskStatus(sessionID, taskID string, status stri
 	return nil
 }
 
-// Update ValidateTask method
 func (sm *SessionManager) ValidateTask(ctx context.Context, sessionID, taskID string) (*validation.ValidationResponse, error) {
-	// Get session
 	session, err := sm.GetSession(sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get session: %w", err)
 	}
 
-	// Check if session has a scenario
 	if session.ScenarioID == "" {
 		return nil, fmt.Errorf("session has no associated scenario")
 	}
@@ -307,7 +284,6 @@ func (sm *SessionManager) ValidateTask(ctx context.Context, sessionID, taskID st
 		"scenarioID": session.ScenarioID,
 	}).Debug("Starting task validation")
 
-	// Load scenario to get task validation rules
 	scenario, err := sm.loadScenario(ctx, session.ScenarioID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load scenario: %w", err)
@@ -329,7 +305,6 @@ func (sm *SessionManager) ValidateTask(ctx context.Context, sessionID, taskID st
 		}(),
 	}).Debug("Loaded scenario for validation with task details")
 
-	// Find task in scenario
 	var taskToValidate *models.Task
 	for i, task := range scenario.Tasks {
 		sm.logger.WithFields(logrus.Fields{
@@ -383,7 +358,6 @@ func (sm *SessionManager) ValidateTask(ctx context.Context, sessionID, taskID st
 		"validationRules": len(taskToValidate.Validation),
 	}).Info("Found task for validation")
 
-	// Check if task has validation rules
 	if len(taskToValidate.Validation) == 0 {
 		sm.logger.WithFields(logrus.Fields{
 			"sessionID":  sessionID,
@@ -391,7 +365,6 @@ func (sm *SessionManager) ValidateTask(ctx context.Context, sessionID, taskID st
 			"scenarioID": session.ScenarioID,
 		}).Warn("Task has no validation rules")
 
-		// Return success if no validation rules
 		return &validation.ValidationResponse{
 			Success:   true,
 			Message:   "No validation rules defined for this task",
@@ -400,7 +373,6 @@ func (sm *SessionManager) ValidateTask(ctx context.Context, sessionID, taskID st
 		}, nil
 	}
 
-	// Log each validation rule
 	for i, rule := range taskToValidate.Validation {
 		sm.logger.WithFields(logrus.Fields{
 			"taskID":    taskID,
@@ -410,19 +382,16 @@ func (sm *SessionManager) ValidateTask(ctx context.Context, sessionID, taskID st
 		}).Debug("Validating rule")
 	}
 
-	// Validate task using the unified validator
 	result, err := sm.unifiedValidator.ValidateTask(ctx, session, taskToValidate.Validation)
 	if err != nil {
 		return nil, fmt.Errorf("validation failed: %w", err)
 	}
 
-	// Update task status based on validation result
 	status := "failed"
 	if result.Success {
 		status = "completed"
 	}
 
-	// Store validation result in session - NEW FUNCTIONALITY
 	err = sm.UpdateTaskValidationResult(sessionID, taskID, status, result)
 	if err != nil {
 		sm.logger.WithError(err).WithFields(logrus.Fields{
@@ -430,7 +399,6 @@ func (sm *SessionManager) ValidateTask(ctx context.Context, sessionID, taskID st
 			"taskID":    taskID,
 			"status":    status,
 		}).Error("Failed to update task validation result")
-		// Continue despite error - validation result is more important
 	}
 
 	sm.logger.WithFields(logrus.Fields{
@@ -445,15 +413,14 @@ func (sm *SessionManager) ValidateTask(ctx context.Context, sessionID, taskID st
 }
 
 func (sm *SessionManager) UpdateTaskValidationResult(sessionID, taskID string, status string, validationResult *validation.ValidationResponse) error {
-	sm.lock.Lock()
-	defer sm.lock.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 
-	session, ok := sm.sessions[sessionID]
-	if !ok {
+	session, err := sm.store.Get(ctx, sessionID)
+	if err != nil {
 		return fmt.Errorf("session not found: %s", sessionID)
 	}
 
-	// Find task and update status and validation result
 	found := false
 	for i, task := range session.Tasks {
 		if task.ID == taskID {
@@ -469,7 +436,6 @@ func (sm *SessionManager) UpdateTaskValidationResult(sessionID, taskID string, s
 		}
 	}
 
-	// Task not found, add it
 	if !found {
 		session.Tasks = append(session.Tasks, models.TaskStatus{
 			ID:             taskID,
@@ -483,6 +449,10 @@ func (sm *SessionManager) UpdateTaskValidationResult(sessionID, taskID string, s
 		})
 	}
 
+	if err := sm.store.Save(ctx, session); err != nil {
+		return fmt.Errorf("failed to save session: %w", err)
+	}
+
 	sm.logger.WithFields(logrus.Fields{
 		"sessionID": sessionID,
 		"taskID":    taskID,
@@ -493,22 +463,24 @@ func (sm *SessionManager) UpdateTaskValidationResult(sessionID, taskID string, s
 	return nil
 }
 
-// RegisterTerminalSession registers a terminal session for a VM
 func (sm *SessionManager) RegisterTerminalSession(sessionID, terminalID, target string) error {
-	sm.lock.Lock()
-	defer sm.lock.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 
-	session, ok := sm.sessions[sessionID]
-	if !ok {
+	session, err := sm.store.Get(ctx, sessionID)
+	if err != nil {
 		return fmt.Errorf("session not found: %s", sessionID)
 	}
 
-	// Initialize map if nil
 	if session.TerminalSessions == nil {
 		session.TerminalSessions = make(map[string]string)
 	}
 
 	session.TerminalSessions[terminalID] = target
+
+	if err := sm.store.Save(ctx, session); err != nil {
+		return fmt.Errorf("failed to save session: %w", err)
+	}
 
 	sm.logger.WithFields(logrus.Fields{
 		"sessionID":  sessionID,
@@ -519,22 +491,24 @@ func (sm *SessionManager) RegisterTerminalSession(sessionID, terminalID, target 
 	return nil
 }
 
-// UnregisterTerminalSession removes a terminal session
 func (sm *SessionManager) UnregisterTerminalSession(sessionID, terminalID string) error {
-	sm.lock.Lock()
-	defer sm.lock.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 
-	session, ok := sm.sessions[sessionID]
-	if !ok {
+	session, err := sm.store.Get(ctx, sessionID)
+	if err != nil {
 		return fmt.Errorf("session not found: %s", sessionID)
 	}
 
-	// Check if TerminalSessions map exists
 	if session.TerminalSessions == nil {
-		return nil // Nothing to unregister
+		return nil
 	}
 
 	delete(session.TerminalSessions, terminalID)
+
+	if err := sm.store.Save(ctx, session); err != nil {
+		return fmt.Errorf("failed to save session: %w", err)
+	}
 
 	sm.logger.WithFields(logrus.Fields{
 		"sessionID":  sessionID,
@@ -544,24 +518,19 @@ func (sm *SessionManager) UnregisterTerminalSession(sessionID, terminalID string
 	return nil
 }
 
-// createNamespace creates a new namespace for the session
 func (sm *SessionManager) createNamespace(ctx context.Context, namespace string) error {
 	sm.logger.WithField("namespace", namespace).Info("Creating namespace")
 
-	// Check if namespace already exists
 	_, err := sm.clientset.CoreV1().Namespaces().Get(ctx, namespace, metav1.GetOptions{})
 	if err == nil {
-		// Namespace already exists, that's fine
 		sm.logger.WithField("namespace", namespace).Info("Namespace already exists, continuing")
 		return nil
 	}
 
-	// If error is NOT "not found", return the error
 	if !errors.IsNotFound(err) {
 		return fmt.Errorf("failed to check existing namespace: %w", err)
 	}
 
-	// Create namespace with labels
 	ns := &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: namespace,
@@ -573,7 +542,6 @@ func (sm *SessionManager) createNamespace(ctx context.Context, namespace string)
 
 	_, err = sm.clientset.CoreV1().Namespaces().Create(ctx, ns, metav1.CreateOptions{})
 	if err != nil {
-		// Double-check if it's an "already exists" error
 		if errors.IsAlreadyExists(err) {
 			sm.logger.WithField("namespace", namespace).Info("Namespace created by another process, continuing")
 			return nil
@@ -588,24 +556,21 @@ func (sm *SessionManager) createNamespace(ctx context.Context, namespace string)
 func (sm *SessionManager) setupResourceQuotas(ctx context.Context, namespace string) error {
 	sm.logger.WithField("namespace", namespace).Info("Setting up resource quotas")
 
-	// Create a resource quota with HIGHER limits for cluster pool
 	quota := &corev1.ResourceQuota{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "session-quota",
 		},
 		Spec: corev1.ResourceQuotaSpec{
 			Hard: corev1.ResourceList{
-				corev1.ResourceCPU:    resource.MustParse("16"),   // Increased from 4
-				corev1.ResourceMemory: resource.MustParse("16Gi"), // Increased from 8Gi
-				corev1.ResourcePods:   resource.MustParse("20"),   // Increased from 10
+				corev1.ResourceCPU:    resource.MustParse("16"),
+				corev1.ResourceMemory: resource.MustParse("16Gi"),
+				corev1.ResourcePods:   resource.MustParse("20"),
 			},
 		},
 	}
 
-	// Check if quota already exists
 	existingQuota, err := sm.clientset.CoreV1().ResourceQuotas(namespace).Get(ctx, "session-quota", metav1.GetOptions{})
 	if err == nil {
-		// Update existing quota
 		existingQuota.Spec = quota.Spec
 		_, err = sm.clientset.CoreV1().ResourceQuotas(namespace).Update(ctx, existingQuota, metav1.UpdateOptions{})
 		if err != nil {
@@ -615,7 +580,6 @@ func (sm *SessionManager) setupResourceQuotas(ctx context.Context, namespace str
 		return nil
 	}
 
-	// Create new quota if it doesn't exist
 	if errors.IsNotFound(err) {
 		_, err = sm.clientset.CoreV1().ResourceQuotas(namespace).Create(ctx, quota, metav1.CreateOptions{})
 		if err != nil {
@@ -628,18 +592,15 @@ func (sm *SessionManager) setupResourceQuotas(ctx context.Context, namespace str
 	return fmt.Errorf("failed to check existing quota: %w", err)
 }
 
-// loadScenario loads a scenario by ID
 func (sm *SessionManager) loadScenario(ctx context.Context, scenarioID string) (*models.Scenario, error) {
 	return sm.scenarioManager.GetScenario(scenarioID)
 }
 
-// Update initializeScenario method
 func (sm *SessionManager) initializeScenario(ctx context.Context, session *models.Session) error {
 	if session.ScenarioID == "" {
 		return fmt.Errorf("session has no scenario ID")
 	}
 
-	// Load scenario
 	scenario, err := sm.scenarioManager.GetScenario(session.ScenarioID)
 	if err != nil {
 		return fmt.Errorf("failed to load scenario: %w", err)
@@ -652,16 +613,13 @@ func (sm *SessionManager) initializeScenario(ctx context.Context, session *model
 		"setupSteps":    len(scenario.SetupSteps),
 	}).Info("Initializing scenario for session")
 
-	// Check if scenario has setup steps
 	if len(scenario.SetupSteps) == 0 {
 		sm.logger.WithField("scenarioID", scenario.ID).Debug("No setup steps for scenario")
 		return nil
 	}
 
-	// Create scenario initializer
 	initializer := scenarios.NewScenarioInitializer(sm.clientset, sm.kubevirtClient, sm.logger)
 
-	// Run initialization with timeout
 	initCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
 
@@ -691,13 +649,12 @@ func (sm *SessionManager) GetSessionWithScenario(ctx context.Context, sessionID 
 	scenario, err := sm.loadScenario(ctx, session.ScenarioID)
 	if err != nil {
 		sm.logger.WithError(err).WithField("scenarioID", session.ScenarioID).Warn("Failed to load scenario for session")
-		return session, nil, nil // Return session even if scenario fails to load
+		return session, nil, nil
 	}
 
 	return session, scenario, nil
 }
 
-// cleanupExpiredSessions periodically checks and cleans up expired sessions
 func (sm *SessionManager) cleanupExpiredSessions() {
 	ticker := time.NewTicker(time.Duration(sm.config.CleanupIntervalMinutes) * time.Minute)
 	defer ticker.Stop()
@@ -707,60 +664,33 @@ func (sm *SessionManager) cleanupExpiredSessions() {
 		case <-ticker.C:
 			sm.logger.Debug("Running session cleanup")
 
-			// Use a context with timeout for cleanup operations
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 
-			// Find expired sessions
-			expiredSessions := make([]string, 0)
+			sessions, err := sm.store.List(ctx)
+			if err != nil {
+				sm.logger.WithError(err).Error("Failed to list sessions for cleanup")
+				cancel()
+				continue
+			}
 
-			func() {
-				sm.lock.Lock()
-				defer sm.lock.Unlock()
+			now := time.Now()
+			for _, session := range sessions {
+				if now.After(session.ExpirationTime) && session.Status != models.SessionStatusFailed {
+					sm.logger.WithField("sessionID", session.ID).Info("Cleaning up expired session")
 
-				now := time.Now()
+					session.Status = models.SessionStatusFailed
+					session.StatusMessage = "Session expired"
+					sm.store.Save(ctx, session)
 
-				// Find expired sessions
-				for id, session := range sm.sessions {
-					if now.After(session.ExpirationTime) &&
-						session.Status != models.SessionStatusFailed {
-						expiredSessions = append(expiredSessions, id)
-
-						// Mark as failed to prevent race conditions
-						session.Status = models.SessionStatusFailed
-						session.StatusMessage = "Session expired"
-					}
-				}
-			}()
-
-			// Clean up marked sessions outside the lock
-			for _, id := range expiredSessions {
-				sm.logger.WithField("sessionID", id).Info("Cleaning up expired session")
-
-				// Get session with lock
-				var session *models.Session
-				func() {
-					sm.lock.RLock()
-					defer sm.lock.RUnlock()
-					session = sm.sessions[id]
-				}()
-
-				if session != nil {
-					// Clean up resources
-					err := sm.DeleteSession(ctx, id)
+					err := sm.DeleteSession(ctx, session.ID)
 					if err != nil {
-						sm.logger.WithError(err).WithField("sessionID", id).Error("Error cleaning up expired session environment")
+						sm.logger.WithError(err).WithField("sessionID", session.ID).Error("Error cleaning up expired session environment")
 					}
 
-					// Now remove from sessions map with proper locking
-					sm.lock.Lock()
-					delete(sm.sessions, id)
-					sm.lock.Unlock()
-
-					sm.logger.WithField("sessionID", id).Info("Expired session removed")
+					sm.logger.WithField("sessionID", session.ID).Info("Expired session removed")
 				}
 			}
 
-			// Always cancel the context when done
 			cancel()
 
 		case <-sm.stopCh:
@@ -769,13 +699,11 @@ func (sm *SessionManager) cleanupExpiredSessions() {
 	}
 }
 
-// Stop stops the session manager and releases resources
 func (sm *SessionManager) Stop() {
 	close(sm.stopCh)
 	sm.logger.Info("Session manager stopped")
 }
 
-// CheckVMsStatus checks the status of VMs in a session including SSH readiness
 func (sm *SessionManager) CheckVMsStatus(ctx context.Context, session *models.Session) (string, error) {
 	controlPlaneStatus, err := sm.kubevirtClient.GetVMStatus(ctx, session.Namespace, session.ControlPlaneVM)
 	if err != nil {
@@ -793,13 +721,10 @@ func (sm *SessionManager) CheckVMsStatus(ctx context.Context, session *models.Se
 		"workerNodeStatus":   workerNodeStatus,
 	}).Debug("VM status check")
 
-	// Only return "Running" if both VMs are running
 	if controlPlaneStatus == "Running" && workerNodeStatus == "Running" {
-		// For cluster pool sessions, also check SSH readiness
 		if session.AssignedCluster != "" {
 			sm.logger.WithField("sessionID", session.ID).Debug("Checking SSH readiness for cluster pool VMs")
 
-			// Check SSH readiness with timeout
 			sshCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 			defer cancel()
 
@@ -812,35 +737,34 @@ func (sm *SessionManager) CheckVMsStatus(ctx context.Context, session *models.Se
 				"workerSSHReady": workerSSHReady,
 			}).Debug("SSH readiness check completed")
 
-			// If SSH is ready for both, return "Running"
 			if cpSSHReady && workerSSHReady {
 				return "Running", nil
 			}
 
-			// If VMs are running but SSH not ready, return "Starting"
 			return "Starting", nil
 		}
 
 		return "Running", nil
 	}
 
-	// Return the status of the control plane since it's more critical
 	return controlPlaneStatus, nil
 }
 
-// UpdateSessionStatus updates the status of a session
 func (sm *SessionManager) UpdateSessionStatus(sessionID string, status models.SessionStatus, message string) error {
-	sm.lock.Lock()
-	defer sm.lock.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 
-	session, ok := sm.sessions[sessionID]
-	if !ok {
+	session, err := sm.store.Get(ctx, sessionID)
+	if err != nil {
 		return fmt.Errorf("session not found: %s", sessionID)
 	}
 
-	// Update status
 	session.Status = status
 	session.StatusMessage = message
+
+	if err := sm.store.Save(ctx, session); err != nil {
+		return fmt.Errorf("failed to save session: %w", err)
+	}
 
 	sm.logger.WithFields(logrus.Fields{
 		"sessionID": sessionID,
@@ -852,28 +776,25 @@ func (sm *SessionManager) UpdateSessionStatus(sessionID string, status models.Se
 }
 
 func (sm *SessionManager) GetOrCreateTerminalSession(sessionID, target string) (string, bool, error) {
-	sm.lock.Lock()
-	defer sm.lock.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 
-	session, ok := sm.sessions[sessionID]
-	if !ok {
+	session, err := sm.store.Get(ctx, sessionID)
+	if err != nil {
 		return "", false, fmt.Errorf("session not found: %s", sessionID)
 	}
 
-	// Generate deterministic terminal ID (matching TerminalManager logic)
 	expectedTerminalID := fmt.Sprintf("%s-%s", sessionID, target)
 
-	// Initialize ActiveTerminals if nil
 	if session.ActiveTerminals == nil {
 		session.ActiveTerminals = make(map[string]models.TerminalInfo)
 	}
 
-	// Check if terminal already exists with the expected ID
 	if terminalInfo, exists := session.ActiveTerminals[expectedTerminalID]; exists {
 		if terminalInfo.Status == "active" {
-			// Update last used time
 			terminalInfo.LastUsedAt = time.Now()
 			session.ActiveTerminals[expectedTerminalID] = terminalInfo
+			sm.store.Save(ctx, session)
 
 			sm.logger.WithFields(logrus.Fields{
 				"sessionID":  sessionID,
@@ -881,26 +802,22 @@ func (sm *SessionManager) GetOrCreateTerminalSession(sessionID, target string) (
 				"target":     target,
 			}).Info("Reusing existing terminal session with deterministic ID")
 
-			return expectedTerminalID, true, nil // true = existing terminal
+			return expectedTerminalID, true, nil
 		}
 	}
 
-	// No existing active terminal found, will need to create new one
-	// Return the deterministic ID that should be created
-	return expectedTerminalID, false, nil // false = needs new terminal
+	return expectedTerminalID, false, nil
 }
 
-// StoreTerminalSession stores terminal info in session
 func (sm *SessionManager) StoreTerminalSession(sessionID, terminalID, target string) error {
-	sm.lock.Lock()
-	defer sm.lock.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 
-	session, ok := sm.sessions[sessionID]
-	if !ok {
+	session, err := sm.store.Get(ctx, sessionID)
+	if err != nil {
 		return fmt.Errorf("session not found: %s", sessionID)
 	}
 
-	// Verify that the terminalID matches our deterministic pattern
 	expectedTerminalID := fmt.Sprintf("%s-%s", sessionID, target)
 	if terminalID != expectedTerminalID {
 		sm.logger.WithFields(logrus.Fields{
@@ -912,12 +829,10 @@ func (sm *SessionManager) StoreTerminalSession(sessionID, terminalID, target str
 		terminalID = expectedTerminalID
 	}
 
-	// Initialize ActiveTerminals if nil
 	if session.ActiveTerminals == nil {
 		session.ActiveTerminals = make(map[string]models.TerminalInfo)
 	}
 
-	// Store or update terminal info
 	session.ActiveTerminals[terminalID] = models.TerminalInfo{
 		ID:         terminalID,
 		Target:     target,
@@ -926,11 +841,14 @@ func (sm *SessionManager) StoreTerminalSession(sessionID, terminalID, target str
 		LastUsedAt: time.Now(),
 	}
 
-	// Also maintain existing TerminalSessions map for backward compatibility
 	if session.TerminalSessions == nil {
 		session.TerminalSessions = make(map[string]string)
 	}
 	session.TerminalSessions[terminalID] = target
+
+	if err := sm.store.Save(ctx, session); err != nil {
+		return fmt.Errorf("failed to save session: %w", err)
+	}
 
 	sm.logger.WithFields(logrus.Fields{
 		"sessionID":  sessionID,
@@ -941,13 +859,12 @@ func (sm *SessionManager) StoreTerminalSession(sessionID, terminalID, target str
 	return nil
 }
 
-// MarkTerminalInactive marks a terminal as inactive
 func (sm *SessionManager) MarkTerminalInactive(sessionID, terminalID string) error {
-	sm.lock.Lock()
-	defer sm.lock.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 
-	session, ok := sm.sessions[sessionID]
-	if !ok {
+	session, err := sm.store.Get(ctx, sessionID)
+	if err != nil {
 		return fmt.Errorf("session not found: %s", sessionID)
 	}
 
@@ -956,6 +873,10 @@ func (sm *SessionManager) MarkTerminalInactive(sessionID, terminalID string) err
 			terminalInfo.Status = "disconnected"
 			terminalInfo.LastUsedAt = time.Now()
 			session.ActiveTerminals[terminalID] = terminalInfo
+
+			if err := sm.store.Save(ctx, session); err != nil {
+				return fmt.Errorf("failed to save session: %w", err)
+			}
 		}
 	}
 
@@ -964,13 +885,11 @@ func (sm *SessionManager) MarkTerminalInactive(sessionID, terminalID string) err
 
 // CLUSTER POOL
 
-// BootstrapClusterPool creates 3 baseline clusters in static namespaces
 func (sm *SessionManager) BootstrapClusterPool(ctx context.Context) error {
 	clusterIDs := []string{"cluster1", "cluster2", "cluster3"}
 
 	sm.logger.Info("Starting cluster pool bootstrap")
 
-	// Bootstrap clusters SEQUENTIALLY to avoid resource conflicts
 	for _, clusterID := range clusterIDs {
 		sm.logger.WithField("clusterID", clusterID).Info("Starting bootstrap for cluster")
 
@@ -981,7 +900,6 @@ func (sm *SessionManager) BootstrapClusterPool(ctx context.Context) error {
 
 		sm.logger.WithField("clusterID", clusterID).Info("Cluster bootstrap completed")
 
-		// Add delay between cluster bootstraps to avoid resource conflicts
 		time.Sleep(30 * time.Second)
 	}
 
@@ -989,34 +907,29 @@ func (sm *SessionManager) BootstrapClusterPool(ctx context.Context) error {
 	return nil
 }
 
-// bootstrapClusterInNamespace bootstraps one cluster using existing proven logic
 func (sm *SessionManager) bootstrapClusterInNamespace(ctx context.Context, clusterID string) error {
-	namespace := clusterID // namespace matches clusterID
+	namespace := clusterID
 
 	sm.logger.WithField("clusterID", clusterID).Info("Bootstrapping cluster")
 
-	// Use EXISTING VM naming pattern to avoid breaking join command logic
 	controlPlaneVM := fmt.Sprintf("cp-%s", clusterID)
 	workerNodeVM := fmt.Sprintf("wk-%s", clusterID)
 
-	// Create session object to use with existing provisionFromBootstrap
 	session := &models.Session{
-		ID:             clusterID, // Use clusterID as session ID
-		Namespace:      namespace, // Use static cluster namespace
+		ID:             clusterID,
+		Namespace:      namespace,
 		Status:         models.SessionStatusProvisioning,
-		ControlPlaneVM: controlPlaneVM, // Keep existing naming pattern
-		WorkerNodeVM:   workerNodeVM,   // Keep existing naming pattern
+		ControlPlaneVM: controlPlaneVM,
+		WorkerNodeVM:   workerNodeVM,
 		StartTime:      time.Now(),
-		ExpirationTime: time.Now().Add(240 * time.Hour), // Long expiration for pool clusters
+		ExpirationTime: time.Now().Add(240 * time.Hour),
 	}
 
-	// Clean up existing resources if they exist
 	err := sm.cleanupExistingCluster(ctx, session)
 	if err != nil {
 		sm.logger.WithError(err).WithField("clusterID", clusterID).Warn("Failed to cleanup existing cluster, continuing...")
 	}
 
-	// Use existing proven provisionFromBootstrap method with bootstrap flag
 	err = sm.provisionFromBootstrapForClusterPool(ctx, session)
 	if err != nil {
 		return fmt.Errorf("failed to bootstrap cluster %s: %w", clusterID, err)
@@ -1024,7 +937,6 @@ func (sm *SessionManager) bootstrapClusterInNamespace(ctx context.Context, clust
 
 	sm.logger.WithField("clusterID", clusterID).Info("Cluster bootstrap completed")
 
-	// ADD THIS LINE - Mark cluster as available in the pool
 	err = sm.clusterPool.MarkClusterAvailable(clusterID)
 	if err != nil {
 		sm.logger.WithError(err).WithField("clusterID", clusterID).Error("Failed to mark cluster as available")
@@ -1034,34 +946,28 @@ func (sm *SessionManager) bootstrapClusterInNamespace(ctx context.Context, clust
 	return nil
 }
 
-// cleanupExistingCluster removes existing VMs and resources before bootstrap
 func (sm *SessionManager) cleanupExistingCluster(ctx context.Context, session *models.Session) error {
 	sm.logger.WithField("namespace", session.Namespace).Info("Cleaning up existing cluster resources")
 
-	// Delete existing VMs if they exist
 	err := sm.kubevirtClient.DeleteVMs(ctx, session.Namespace, session.ControlPlaneVM, session.WorkerNodeVM)
 	if err != nil {
 		sm.logger.WithError(err).Warn("Failed to delete existing VMs")
 	}
 
-	// Wait a bit for cleanup to complete
 	time.Sleep(10 * time.Second)
 
 	return nil
 }
 
-// provisionFromBootstrapForClusterPool provisions a cluster for the pool (no session status updates)
 func (sm *SessionManager) provisionFromBootstrapForClusterPool(ctx context.Context, session *models.Session) error {
 	sm.logger.WithField("clusterID", session.ID).Info("Provisioning cluster for pool using bootstrap method")
 
-	// Verify KubeVirt is available
 	err := sm.kubevirtClient.VerifyKubeVirtAvailable(ctx)
 	if err != nil {
 		sm.logger.WithError(err).Error("Failed to verify KubeVirt availability")
 		return fmt.Errorf("failed to verify KubeVirt availability: %w", err)
 	}
 
-	// Create namespace
 	namespaceCtx, cancelNamespace := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancelNamespace()
 	err = sm.createNamespace(namespaceCtx, session.Namespace)
@@ -1069,10 +975,8 @@ func (sm *SessionManager) provisionFromBootstrapForClusterPool(ctx context.Conte
 		return fmt.Errorf("failed to create namespace: %w", err)
 	}
 
-	// Add a short delay to ensure the namespace is fully created
 	time.Sleep(2 * time.Second)
 
-	// Set up resource quotas
 	quotaCtx, cancelQuota := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancelQuota()
 	sm.logger.WithField("namespace", session.Namespace).Info("Setting up resource quotas")
@@ -1081,10 +985,8 @@ func (sm *SessionManager) provisionFromBootstrapForClusterPool(ctx context.Conte
 		return fmt.Errorf("failed to set up resource quotas: %w", err)
 	}
 
-	// Add a short delay to ensure resource quotas are applied
 	time.Sleep(2 * time.Second)
 
-	// Create KubeVirt VMs
 	vmCtx, cancelVM := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancelVM()
 	sm.logger.WithField("clusterID", session.ID).Info("Creating KubeVirt VMs")
@@ -1093,7 +995,6 @@ func (sm *SessionManager) provisionFromBootstrapForClusterPool(ctx context.Conte
 		return fmt.Errorf("failed to create VMs: %w", err)
 	}
 
-	// Wait for VMs to be ready
 	waitCtx, cancelWait := context.WithTimeout(ctx, 15*time.Minute)
 	defer cancelWait()
 	sm.logger.WithField("clusterID", session.ID).Info("Waiting for VMs to be ready")
@@ -1102,40 +1003,43 @@ func (sm *SessionManager) provisionFromBootstrapForClusterPool(ctx context.Conte
 		return fmt.Errorf("failed waiting for VMs: %w", err)
 	}
 
-	// NO scenario initialization needed for cluster pool
-	// NO session status updates needed for cluster pool
-
 	sm.logger.WithField("clusterID", session.ID).Info("Cluster pool bootstrap completed successfully")
 	return nil
 }
 
-// cleanStaleTerminals removes terminal sessions that don't exist in TerminalManager
 func (sm *SessionManager) cleanStaleTerminals() {
-	sm.lock.Lock()
-	defer sm.lock.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 
 	sm.logger.Info("Checking for stale terminals on startup")
 
-	// Don't clear terminals on restart - let them reconnect
-	// Only clear if explicitly marked as disconnected for too long
-	for sessionID, session := range sm.sessions {
+	sessions, err := sm.store.List(ctx)
+	if err != nil {
+		sm.logger.WithError(err).Warn("Failed to list sessions for stale terminal cleanup")
+		return
+	}
+
+	for _, session := range sessions {
 		if session.ActiveTerminals != nil {
+			modified := false
 			for terminalID, terminalInfo := range session.ActiveTerminals {
-				// Only clear if disconnected for more than 5 minutes
 				if terminalInfo.Status == "disconnected" &&
 					time.Since(terminalInfo.LastUsedAt) > 5*time.Minute {
 					delete(session.ActiveTerminals, terminalID)
+					modified = true
 					sm.logger.WithFields(logrus.Fields{
-						"sessionID":  sessionID,
+						"sessionID":  session.ID,
 						"terminalID": terminalID,
 					}).Info("Removed stale disconnected terminal")
 				}
+			}
+			if modified {
+				sm.store.Save(ctx, session)
 			}
 		}
 	}
 }
 
-// GetClusterPool returns the cluster pool manager for admin operations
 func (sm *SessionManager) GetClusterPool() *clusterpool.Manager {
 	return sm.clusterPool
 }

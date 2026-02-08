@@ -12,6 +12,7 @@ import (
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/redis/go-redis/v9"
 	"github.com/sirupsen/logrus"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -169,10 +170,7 @@ func main() {
 	router.Use(middleware.RequestID())
 	router.Use(middleware.Logger())
 
-	// Health check and metrics
-	router.GET("/health", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"status": "ok"})
-	})
+	// Metrics endpoint (health check registered after Redis init)
 	router.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
 	// Create Kubernetes client configuration with explicit context
@@ -207,8 +205,43 @@ func main() {
 		logger.WithError(err).Fatal("Failed to create cluster pool manager")
 	}
 
-	// Update session manager creation with cluster pool
-	sessionManager, err := sessions.NewSessionManager(cfg, kubeClient, kubevirtClient, unifiedValidator, logger, scenarioManager, clusterPoolManager)
+	// Initialize Redis client
+	redisClient := redis.NewClient(&redis.Options{
+		Addr:            cfg.RedisURL,
+		Password:        cfg.RedisPassword,
+		DB:              cfg.RedisDB,
+		MaxRetries:      3,
+		MinRetryBackoff: 100 * time.Millisecond,
+		MaxRetryBackoff: 2 * time.Second,
+		DialTimeout:     5 * time.Second,
+		ReadTimeout:     5 * time.Second,
+		WriteTimeout:    5 * time.Second,
+	})
+
+	redisPingCtx, redisPingCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer redisPingCancel()
+	if err := redisClient.Ping(redisPingCtx).Err(); err != nil {
+		logger.WithError(err).Fatal("Failed to connect to Redis")
+	}
+	logger.WithField("addr", cfg.RedisURL).Info("Redis connection established")
+
+	// Health check (registered after Redis init)
+	router.GET("/health", func(c *gin.Context) {
+		healthCtx, healthCancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+		defer healthCancel()
+		if err := redisClient.Ping(healthCtx).Err(); err != nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{
+				"status": "unhealthy",
+				"redis":  "disconnected",
+			})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"status": "ok", "redis": "connected"})
+	})
+
+	sessionStore := sessions.NewRedisSessionStore(redisClient, logger)
+
+	sessionManager, err := sessions.NewSessionManager(cfg, kubeClient, kubevirtClient, unifiedValidator, logger, scenarioManager, clusterPoolManager, sessionStore)
 	if err != nil {
 		logger.WithError(err).Fatal("Failed to create session manager")
 	}
@@ -264,6 +297,9 @@ func main() {
 
 	// Stop cluster pool manager
 	clusterPoolManager.Stop()
+
+	// Close Redis connection
+	redisClient.Close()
 
 	// Shutdown server
 	if err := server.Shutdown(ctx); err != nil {

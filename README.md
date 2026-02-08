@@ -17,6 +17,7 @@ Production-grade Kubernetes-native learning platform that provisions isolated pr
 
 **Session Manager** (`src/internal/sessions/`)
 - Handles complete session lifecycle from cluster assignment to resource cleanup
+- Sessions persisted to Redis via `SessionStore` interface, enabling horizontal scaling with multiple replicas
 - Creates dedicated Kubernetes namespace per session with resource quotas (16 cores, 16Gi memory, 20 pods)
 - Background expiration monitoring via goroutine running every 5 minutes
 - Deterministic terminal ID generation (`{sessionID}-{target}`) enabling frontend reconnection
@@ -73,10 +74,16 @@ Benefits:
 - Distributed consensus via etcd
 - Queryable via kubectl for debugging
 
-**In-Memory Cache with Persistent Fallback**
+**Cluster Pool: In-Memory Cache with Persistent Fallback**
 - ClusterPoolManager maintains in-memory state for O(1) lookups
 - On initialization, reads annotations to reconstruct state
 - Writes to both in-memory and namespace annotations
+
+**Session Storage: Redis**
+- Sessions stored in Redis as JSON with TTL-based expiration
+- Key pattern: `cks:session:{id}` for data, `cks:sessions` SET for index
+- Enables multiple backend replicas with shared session state
+- Health check endpoint validates Redis connectivity
 
 ### Multi-Stage Docker Build
 
@@ -475,6 +482,9 @@ The admin dashboard provides cluster pool and session management capabilities ex
 - Istio (ingress, VirtualService routing)
 - Cert-Manager (automatic TLS certificates)
 
+**Session Storage**
+- Redis (go-redis/v9) for session persistence
+
 **Observability**
 - Logrus 1.9.3 (structured logging)
 - Prometheus client_golang 1.19.1 (metrics)
@@ -500,6 +510,9 @@ Key environment variables:
 | `GOLDEN_IMAGE_NAME` | Base image PVC name | `new-golden-image-1-33-0` |
 | `GOLDEN_IMAGE_NAMESPACE` | Image PVC namespace | `vm-templates` |
 | `POD_CIDR` | Pod network CIDR | `10.0.0.0/8` |
+| `REDIS_URL` | Redis server address | `redis.fullstack.pw:6379` |
+| `REDIS_PASSWORD` | Redis authentication | `""` |
+| `REDIS_DB` | Redis database number | `0` |
 | `SESSION_TIMEOUT_MINUTES` | Session duration | `60` |
 | `CLEANUP_INTERVAL_MINUTES` | Cleanup frequency | `5` |
 
@@ -539,6 +552,8 @@ cks-backend/
 │   ├── internal/
 │   │   ├── clusterpool/manager.go   # Cluster pool state machine
 │   │   ├── sessions/session_manager.go  # Session lifecycle
+│   │   ├── sessions/store.go           # SessionStore interface
+│   │   ├── sessions/store_redis.go     # Redis implementation
 │   │   ├── scenarios/scenario_manager.go  # Scenario loading
 │   │   ├── validation/unified_validator.go  # Validation engine
 │   │   ├── kubevirt/client.go       # KubeVirt operations
