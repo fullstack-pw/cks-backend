@@ -100,7 +100,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
 
 **Runtime Stage** (alpine:3.19)
 - Non-root user execution (UID 1001)
-- Minimal tooling: kubectl, virtctl, openssh
+- Minimal tooling: kubectl
 - Health check endpoint configured
 - Final image ~150MB vs ~800MB with full Go environment
 
@@ -175,19 +175,16 @@ Applied to:
 
 ## Technical Innovations
 
-### Deterministic Terminal IDs
+### Terminal Architecture
 
-Traditional UUID-based terminal IDs prevent reconnection after disconnect. Implementation uses predictable IDs:
+Terminal access is delegated to [cks-terminal-mgmt](https://github.com/fullstack-pw/cks-terminal-mgmt), a dedicated microservice running on the sandboxy cluster. The backend resolves VM names to IPs via the KubeVirt API and returns a terminal-mgmt URL for iframe embedding:
 
-```go
-terminalID := fmt.Sprintf("%s-%s", sessionID, target)
-// Example: "abc123-control-plane", "abc123-worker-node"
+```
+POST /api/v1/sessions/:id/terminals  { target: "control-plane" }
+→ { terminalUrl: "https://terminal.cks.fullstack.pw/terminal?vmIP=10.42.0.56" }
 ```
 
-Benefits:
-- Frontend knows terminal ID before connection
-- Seamless reconnection after network interruption
-- No server-side session storage required
+The `TERMINAL_MGMT_URL` is configured via environment variable/ConfigMap.
 
 ### Cluster Pool Architecture
 
@@ -490,8 +487,6 @@ The admin dashboard provides cluster pool and session management capabilities ex
 - Prometheus client_golang 1.19.1 (metrics)
 
 **Utilities**
-- gorilla/websocket 1.5.4 (terminal sessions)
-- creack/pty 1.1.24 (pseudo-terminal)
 - google/uuid 1.6.0 (session IDs)
 
 ## Environment Configuration
@@ -515,6 +510,7 @@ Key environment variables:
 | `REDIS_DB` | Redis database number | `0` |
 | `SESSION_TIMEOUT_MINUTES` | Session duration | `60` |
 | `CLEANUP_INTERVAL_MINUTES` | Cleanup frequency | `5` |
+| `TERMINAL_MGMT_URL` | cks-terminal-mgmt external URL | `https://terminal.cks.fullstack.pw` |
 
 ## Deployment Architecture
 
@@ -557,9 +553,8 @@ cks-backend/
 │   │   ├── scenarios/scenario_manager.go  # Scenario loading
 │   │   ├── validation/unified_validator.go  # Validation engine
 │   │   ├── kubevirt/client.go       # KubeVirt operations
-│   │   ├── terminal/terminal_manager.go  # WebSocket SSH
 │   │   ├── controllers/             # HTTP handlers
-│   │   ├── services/                # Business logic
+│   │   ├── services/                # Business logic (terminal URL resolution via cks-terminal-mgmt)
 │   │   └── models/models.go         # Data structures
 │   ├── scenarios/                   # CKS training scenarios
 │   │   ├── basic-pod-security/
