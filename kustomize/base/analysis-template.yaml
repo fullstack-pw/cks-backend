@@ -1,7 +1,7 @@
 apiVersion: argoproj.io/v1alpha1
 kind: AnalysisTemplate
 metadata:
-  name: cypress-tests
+  name: cypress-tests-cks-backend
 spec:
   args:
     - name: app-name

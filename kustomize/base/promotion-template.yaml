@@ -14,7 +14,7 @@ spec:
             template:
               spec:
                 restartPolicy: Never
-                serviceAccountName: promotion-sa
+                serviceAccountName: promotion-sa-cks-backend
                 containers:
                   - name: git-promotion
                     image: alpine/git:latest
