@@ -10,10 +10,10 @@ permissions:
 
 jobs:
   ephemeral:
-    uses: fullstack-pw/pipelines/.github/workflows/ephemeral-environment.yml@main
+    uses: homelabz-eu/pipelines/.github/workflows/ephemeral-environment.yml@main
     with:
       image-name: library/cks-backend
-      dev-hostname-placeholder: dev.api.cks.fullstack.pw
+      dev-hostname-placeholder: dev.api.cks.homelabz.eu
       deployment-name: cks-backend
       cypress-spec: cypress/e2e/cks-backend.cy.js
       cypress-env-key: CKS_BACKEND_URL
